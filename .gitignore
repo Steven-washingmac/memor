@@ -1,0 +1,123 @@
+# ===== 操作系统文件 =====
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Linux
+*~
+.directory
+
+# ===== 编辑器和 IDE =====
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+*.sublime-workspace
+*.sublime-project
+
+# ===== 依赖和构建产物 =====
+node_modules/
+vendor/
+bower_components/
+__pycache__/
+*.py[cod]
+*.class
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.dylib
+dist/
+build/
+target/
+out/
+
+# ===== 包管理器 =====
+# Node
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Python
+*.egg-info/
+*.egg
+.eggs/
+venv/
+.venv/
+env/
+.env
+
+# ===== 环境变量和密钥 =====
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+secrets/
+credentials/
+
+# ===== 日志和临时文件 =====
+*.log
+*.tmp
+*.temp
+*.cache
+tmp/
+temp/
+*.pid
+*.seed
+
+# ===== 压缩文件 =====
+*.zip
+*.tar.gz
+*.rar
+*.7z
+
+# ===== 大数据/媒体文件（按需取消注释）=====
+# *.mp4
+# *.avi
+# *.mov
+# *.iso
+# *.psd
+# *.ai
+
+# ===== 备份文件 =====
+*.bak
+*.backup
+*.old
+
+# ===== Docker =====
+.dockerignore
+
+# ===== 测试覆盖率 =====
+coverage/
+.coverage
+htmlcov/
+.nyc_output/
+
+# ===== 校园跑项目专用 =====
+# 数据库文件（含用户登录凭据）
+data/users.db
+# 运行时生成的 GPS 轨迹
+data/routes/
+# Session 文件
+data/session.json
+# 前端构建产物
+frontend/dist/
+frontend/node_modules/
