@@ -121,3 +121,10 @@ data/session.json
 # 前端构建产物
 frontend/dist/
 frontend/node_modules/
+
+# ===== TTag 监控器 =====
+# 运行时导出的 CSV
+*.csv
+# Python 缓存
+__pycache__/
+*.pyc
