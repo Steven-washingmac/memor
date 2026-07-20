@@ -1,0 +1,107 @@
+# ===== 操作系统文件 =====
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Linux
+*~
+.directory
+
+# ===== 编辑器和 IDE =====
+.vscode/
+.idea/
+*.swp
+*.swo
+.project
+.classpath
+.settings/
+*.sublime-workspace
+*.sublime-project
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+*.egg
+.eggs/
+dist/
+build/
+*.whl
+.venv/
+venv/
+env/
+
+# ===== Node / 前端 =====
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+
+# ===== 包管理器锁文件 =====
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+poetry.lock
+Pipfile.lock
+
+# ===== 环境变量和密钥 =====
+.env
+.env.local
+.env.*.local
+.env.production
+*.pem
+*.key
+secrets/
+credentials/
+*.secret
+
+# ===== 日志和临时文件 =====
+*.log
+*.tmp
+*.temp
+*.cache
+tmp/
+temp/
+*.pid
+
+# ===== 数据库和运行时数据 =====
+*.db
+*.sqlite
+*.sqlite3
+data/*
+!data/.gitkeep
+
+# ===== 压缩文件 =====
+*.zip
+*.tar.gz
+*.rar
+*.7z
+
+# ===== 备份文件 =====
+*.bak
+*.backup
+*.old
+
+# ===== 测试覆盖率 =====
+coverage/
+.coverage
+htmlcov/
+.nyc_output/
+.pytest_cache/
+.tox/
+
+# ===== Docker =====
+.dockerignore
