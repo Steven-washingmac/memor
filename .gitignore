@@ -111,20 +111,6 @@ coverage/
 htmlcov/
 .nyc_output/
 
-# ===== 校园跑项目专用 =====
-# 数据库文件（含用户登录凭据）
-data/users.db
-# 运行时生成的 GPS 轨迹
-data/routes/
-# Session 文件
-data/session.json
-# 前端构建产物
-frontend/dist/
-frontend/node_modules/
-
 # ===== TTag 监控器 =====
 # 运行时导出的 CSV
 *.csv
-# Python 缓存
-__pycache__/
-*.pyc
