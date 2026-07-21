@@ -561,6 +561,60 @@ def interactive_loop(server: TRGServer):
 
 
 # ============================================================
+# IP 选择
+# ============================================================
+def list_ips() -> list:
+    """列出本机所有 IPv4 地址"""
+    ips = []
+    try:
+        hostname = socket.gethostname()
+        for ip in socket.gethostbyname_ex(hostname)[2]:
+            if ip != '127.0.0.1':
+                ips.append(ip)
+    except Exception:
+        pass
+    return ips
+
+
+def select_ip(specified: str = None) -> str:
+    """交互式选择监听 IP。
+
+    如果命令行已指定 --ip (非默认值) 则直接使用；
+    否则列出本机 IP 让用户选择，默认监听所有接口 (0.0.0.0)。
+    """
+    if specified and specified != '0.0.0.0':
+        return specified
+
+    ips = list_ips()
+    print("=" * 60)
+    print("  选择监听 IP")
+    print("=" * 60)
+    print()
+    print("  本机可用 IP:")
+    if not ips:
+        print("    (未检测到网络接口)")
+    else:
+        for i, ip in enumerate(ips, 1):
+            print(f"    [{i}] {ip}")
+    print()
+    print("  提示: TRG 基站需要配置为连接到这个 IP")
+    print(f"    [0] 0.0.0.0 — 监听所有接口 (推荐)")
+    print()
+
+    while True:
+        try:
+            choice = input(f"  请选择 [{', '.join(str(i) for i in range(len(ips)+1))}] (默认 0): ").strip()
+            if choice == '' or choice == '0':
+                return '0.0.0.0'
+            idx = int(choice)
+            if 1 <= idx <= len(ips):
+                return ips[idx - 1]
+        except (ValueError, KeyboardInterrupt):
+            pass
+        print("  无效选择，请重试")
+
+
+# ============================================================
 # 主函数
 # ============================================================
 def main():
@@ -569,14 +623,16 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
-  python ttag_monitor.py                                    # 默认 0.0.0.0:20226, 仅T型
+  python ttag_monitor.py                                    # 交互选择 IP, 默认端口
+  python ttag_monitor.py --ip 192.168.3.187                  # 指定监听 IP
   python ttag_monitor.py --port 8899                        # 自定义端口
   python ttag_monitor.py --type 0x00,0x03                   # 多种标签类型
   python ttag_monitor.py --rule A线 175000 175999            # 过滤 ID 区间
   python ttag_monitor.py --export result.csv                 # 导出 CSV
         """
     )
-    parser.add_argument('--ip',     default='0.0.0.0', help='监听 IP (默认 0.0.0.0)')
+    parser.add_argument('--ip',     default=None,
+                        help='监听 IP (不指定则交互选择)')
     parser.add_argument('--port',   type=int, default=20226, help='监听端口 (默认 20226)')
     parser.add_argument('--rule',   nargs=3, action='append', default=[],
                         metavar=('NAME', 'START', 'END'),
@@ -586,6 +642,9 @@ def main():
     parser.add_argument('--export', default=None, help='导出 CSV 文件路径')
 
     args = parser.parse_args()
+
+    # ---- 选择监听 IP ----
+    host = select_ip(args.ip)
 
     # ---- 构建过滤器 ----
     rule_filter = RuleFilter()
@@ -606,7 +665,7 @@ def main():
 
     # ---- 启动 ----
     server = TRGServer(
-        host=args.ip,
+        host=host,
         port=args.port,
         rule_filter=rule_filter,
         export_file=args.export,
