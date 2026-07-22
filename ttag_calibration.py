@@ -7,7 +7,7 @@ TTAG 自动标定系统 (v2)
   python ttag_calibration.py --device 230030 --start 5 --end 8 --step 0.2
   python ttag_calibration.py --device 230030 --start 5 --end 50 --step 0.2 --bath-tolerance 0.05
 """
-import sys, os, time, struct, socket, threading, argparse
+import sys, os, time, struct, socket, threading, argparse, csv
 from collections import deque
 from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -164,9 +164,49 @@ def progress_bar(done, total, width=30):
     return '[' + '#' * filled + '-' * (width - filled) + ']'
 
 
+def resume_from_file(filepath):
+    """解析已有标定文件 (Excel 或 CSV), 返回 (device_id, completed_temps, step)"""
+    completed = []
+    device_id = None
+
+    if filepath.endswith('.csv'):
+        with open(filepath, 'r', encoding='utf-8-sig') as f:
+            reader = csv.reader(f)
+            next(reader, None)  # skip header
+            for row in reader:
+                try:
+                    completed.append(float(row[2]))  # Target(C)
+                    if device_id is None:
+                        device_id = int(row[1])       # TagID
+                except (ValueError, IndexError):
+                    continue
+    else:
+        try:
+            from openpyxl import load_workbook
+            wb = load_workbook(filepath, read_only=True, data_only=True)
+            ws = wb.active
+            for row in ws.iter_rows(min_row=2, values_only=True):
+                try:
+                    completed.append(float(row[2]))
+                    if device_id is None:
+                        device_id = int(row[1])
+                except (ValueError, TypeError):
+                    continue
+            wb.close()
+        except Exception:
+            print(f"无法读取文件: {filepath}")
+            return None, [], None
+
+    step = 0.2
+    if len(completed) >= 2:
+        step = round(completed[1] - completed[0], 2)
+
+    return device_id, sorted(set(completed)), step
+
+
 def main():
     p = argparse.ArgumentParser(description='TTAG 自动标定系统 v2')
-    p.add_argument('--device', type=int, required=True, help='TTAG 设备 ID')
+    p.add_argument('--device', type=int, default=None, help='TTAG 设备 ID')
     p.add_argument('--start', type=float, default=5.0, help='起始温度 (默认 5)')
     p.add_argument('--end', type=float, default=50.0, help='结束温度 (默认 50)')
     p.add_argument('--step', type=float, default=0.2, help='温度步进 (默认 0.2)')
@@ -178,9 +218,33 @@ def main():
     p.add_argument('--stability-threshold', type=int, default=2, help='ADC稳定阈值')
     p.add_argument('--bath-tolerance', type=float, default=0.1, help='水浴稳定容差')
     p.add_argument('--output', default=None, help='输出 Excel 文件 (默认自动生成)')
+    p.add_argument('--resume', default=None, metavar='FILE',
+                   help='从已有标定文件继续 (Excel 或 CSV)')
     p.add_argument('--dry-run', action='store_true')
     p.add_argument('--no-ttag', action='store_true')
     args = p.parse_args()
+
+    # ---- 断点续跑 ----
+    resumed_from = None
+    completed_set = set()
+    if args.resume:
+        if not os.path.exists(args.resume):
+            print(f"文件不存在: {args.resume}")
+            return
+        dev_id, completed, file_step = resume_from_file(args.resume)
+        if dev_id is None:
+            print(f"无法从 {args.resume} 解析数据")
+            return
+        args.device = args.device or dev_id
+        args.step = args.step if args.step != 0.2 else file_step  # CLI 覆盖默认
+        completed_set = set(completed)
+        resumed_from = os.path.basename(args.resume)
+        print(f"续跑: 设备={args.device}, 已完成 {len(completed)} 点, "
+              f"上次: {max(completed):.1f}°C")
+
+    if args.device is None:
+        print("请指定 --device 或使用 --resume <文件>")
+        return
 
     if args.output is None:
         ts = datetime.now().strftime('%m%d_%H%M')
@@ -189,11 +253,28 @@ def main():
     temps = []
     t = args.start
     while t <= args.end + args.step / 2:
-        temps.append(round(t, 1))
+        tp = round(t, 1)
+        if tp not in completed_set:
+            temps.append(tp)
         t += args.step
 
+    # CSV 后备文件
+    csv_path = args.output.replace('.xlsx', '.csv')
+    csv_header = ["#", "TagID", "Target(C)", "Actual(C)", "ADC_Mean",
+                  "ADC_Range", "ADC_Samples", "StableTime(s)", "Timestamp", "Note"]
+
+    def save_csv_row(row_data):
+        """追加一行到 CSV"""
+        file_exists = os.path.exists(csv_path)
+        with open(csv_path, 'a', newline='', encoding='utf-8-sig') as f:
+            writer = csv.writer(f)
+            if not file_exists:
+                writer.writerow(csv_header)
+            writer.writerow(row_data)
+
     if args.dry_run:
-        print(f"标定点: {len(temps)} 个, {args.start}->{args.end}°C, 步进 {args.step}°C")
+        skip_info = f" (跳过 {len(completed_set)} 个已完成)" if completed_set else ""
+        print(f"标定点: {len(temps)} 个{skip_info}, {args.start}->{args.end}°C, 步进 {args.step}°C")
         print(f"水浴容差: +-{args.bath_tolerance}°C | ADC窗口: {args.stability_window}s 阈值<={args.stability_threshold}")
         for i, t in enumerate(temps):
             print(f"  {i+1}. {t}°C", end="  ")
@@ -249,8 +330,9 @@ def main():
     try:
         for i, target in enumerate(temps):
             wb.set_temperature(target)
-            done = len(records)
-            total = len(temps)
+            done = len(records) + len(completed_set)
+            total = len(temps) + len(completed_set)
+            disp_i = i + 1 + len(completed_set)
 
             # ---- 等水浴稳定 ----
             t1 = time.time()
@@ -264,10 +346,11 @@ def main():
 
                 os.system('cls' if os.name == 'nt' else 'clear')
                 print("=" * 65)
-                print(f"  TTAG 自动标定 | 设备 {args.device} | "
+                resume_tag = ' [续跑]' if resumed_from else ''
+                print(f"  TTAG 自动标定{resume_tag} | 设备 {args.device} | "
                       f"{args.start}->{args.end}°C | 步进 {args.step}°C")
                 print("=" * 65)
-                print(f"  [{i+1}/{total}] 等待水浴稳定到 {target}°C ...")
+                print(f"  [{disp_i}/{total}] 等待水浴稳定到 {target}°C ...")
                 print(f"  进度: {progress_bar(done, total)} {done*100//total}% | "
                       f"耗时 {elapsed_t/60:.0f}min | 剩余 {eta/60:.0f}min")
                 print("-" * 65)
@@ -312,7 +395,7 @@ def main():
                     print(f"  TTAG 自动标定 | 设备 {args.device} | "
                           f"{args.start}->{args.end}°C | 步进 {args.step}°C")
                     print("=" * 65)
-                    print(f"  [{i+1}/{total}] 等待 ADC 稳定 ...")
+                    print(f"  [{disp_i}/{total}] 等待 ADC 稳定 ...")
                     print(f"  进度: {progress_bar(done, total)} {done*100//total}% | "
                           f"耗时 {et/60:.0f}min | 剩余 {eta_/60:.0f}min")
                     print("-" * 65)
@@ -360,6 +443,10 @@ def main():
                 'adc_mean': adc_mean, 'adc_range': adc_range,
                 'adc_n': adc_n, 'elapsed': adc_elapsed, 'ts': ts_str,
             })
+            # 每点立即写 CSV (后备), 每 5 点写 Excel
+            save_csv_row([len(records) + len(completed_set), args.device,
+                         target, pv_now, round(adc_mean, 1), adc_range,
+                         adc_n, round(adc_elapsed), ts_str, ''])
             if len(records) % 5 == 0:
                 save_excel()
             time.sleep(0.5)
