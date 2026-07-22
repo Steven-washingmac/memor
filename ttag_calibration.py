@@ -239,8 +239,11 @@ def main():
         args.step = args.step if args.step != 0.2 else file_step  # CLI 覆盖默认
         completed_set = set(completed)
         resumed_from = os.path.basename(args.resume)
+        # 自动从最后一个已完成点之后继续（除非用户显式指定了 --start）
+        if args.start == 5.0 and completed:
+            args.start = round(max(completed) + args.step, 1)
         print(f"续跑: 设备={args.device}, 已完成 {len(completed)} 点, "
-              f"上次: {max(completed):.1f}°C")
+              f"上次: {max(completed):.1f}°C, 从 {args.start}°C 继续")
 
     if args.device is None:
         print("请指定 --device 或使用 --resume <文件>")
