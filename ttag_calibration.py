@@ -134,29 +134,37 @@ class TtagReceiver:
 
 
 class AdcStabilityDetector:
-    def __init__(self, window_sec=10.0, threshold=2):
-        self.window_sec = window_sec; self.threshold = threshold
-        self._history = deque()
+    """基于样本计数的 ADC 稳定性检测（不依赖高频轮询）
+
+    仅在实际收到新帧时 feed()，收集 min_samples 个样本后检查峰峰值。
+    """
+    def __init__(self, min_samples=5, threshold=5):
+        self.min_samples = min_samples; self.threshold = threshold
+        self._samples = []  # [(ts, adc), ...]
 
     def feed(self, adc, ts=None):
+        """仅在基站发来新 ADC 数据时调用"""
         if ts is None: ts = time.time()
-        self._history.append((ts, adc))
-        cutoff = ts - self.window_sec
-        while self._history and self._history[0][0] < cutoff:
-            self._history.popleft()
+        self._samples.append((ts, adc))
 
     def check(self):
-        if len(self._history) < 3:
-            return False, None, None, len(self._history)
-        adcs = [a for _, a in self._history]
-        span = self._history[-1][0] - self._history[0][0]
-        rng = max(adcs) - min(adcs)
-        mean = sum(adcs) / len(adcs)
-        stable = span >= self.window_sec * 0.8 and rng <= self.threshold
-        return stable, mean, rng, len(self._history)
+        """返回 (stable, mean, peak_to_peak, n_samples, elapsed_sec)"""
+        n = len(self._samples)
+        if n < max(self.min_samples, 5):  # 至少 5 个样本才开始评估
+            elapsed = self._samples[-1][0] - self._samples[0][0] if n >= 2 else 0
+            return False, None, None, n, elapsed
+        adcs = [a for _, a in self._samples]
+        # 只取最近 min_samples 个样本做稳定判定（早期漂移值不参与）
+        recent = adcs[-self.min_samples:]
+        mean = sum(recent) / len(recent)
+        rng = max(recent) - min(recent)
+        elapsed = self._samples[-1][0] - self._samples[0][0] if n >= 2 else 0
+        # 稳定条件: 最近 N 个峰峰值 ≤ 阈值
+        stable = rng <= self.threshold
+        return stable, mean, rng, n, elapsed
 
     def reset(self):
-        self._history.clear()
+        self._samples.clear()
 
 
 def progress_bar(done, total, width=30):
@@ -232,8 +240,8 @@ def main():
     p.add_argument('--connect', default=None, metavar='IP:PORT',
                    help='客户端模式连接基站 (如 192.168.3.188:20226)')
     p.add_argument('--water-bath-port', default='COM3', help='水浴箱串口')
-    p.add_argument('--stability-window', type=float, default=3.0, help='ADC稳定窗口(秒)')
-    p.add_argument('--stability-threshold', type=int, default=5, help='ADC稳定峰峰值阈值(10-bit ADC建议5)')
+    p.add_argument('--stability-samples', type=int, default=5, help='ADC稳定所需样本数(目标标签约每40帧出现1次)')
+    p.add_argument('--stability-threshold', type=int, default=5, help='ADC峰峰值阈值(10-bit ADC建议5)')
     p.add_argument('--bath-tolerance', type=float, default=0.1, help='水浴稳定容差')
     p.add_argument('--output', default=None, help='输出 Excel 文件 (默认自动生成)')
     p.add_argument('--resume', default=None, metavar='FILE',
@@ -269,8 +277,15 @@ def main():
         return
 
     if args.output is None:
-        ts = datetime.now().strftime('%m%d_%H%M')
-        args.output = f'cal_{args.device}_{ts}.xlsx'
+        # 创建输出目录: ADCTdata/时间戳/
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        run_ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+        output_root = os.path.join(script_dir, 'ADCTdata')
+        output_dir = os.path.join(output_root, run_ts)
+        os.makedirs(output_dir, exist_ok=True)
+        args.output = os.path.join(output_dir, f'cal_{args.device}.xlsx')
+    else:
+        output_dir = os.path.dirname(os.path.abspath(args.output)) or '.'
 
     temps = []
     t = args.start
@@ -297,7 +312,7 @@ def main():
     if args.dry_run:
         skip_info = f" (跳过 {len(completed_set)} 个已完成)" if completed_set else ""
         print(f"标定点: {len(temps)} 个{skip_info}, {args.start}->{args.end}°C, 步进 {args.step}°C")
-        print(f"水浴容差: +-{args.bath_tolerance}°C | ADC窗口: {args.stability_window}s 阈值<={args.stability_threshold}")
+        print(f"水浴容差: +-{args.bath_tolerance}°C | ADC样本数: {args.stability_samples} 阈值<={args.stability_threshold}")
         for i, t in enumerate(temps):
             print(f"  {i+1}. {t}°C", end="  ")
             if (i+1) % 10 == 0: print()
@@ -329,7 +344,7 @@ def main():
         print()
         time.sleep(1)
 
-    adc_det = AdcStabilityDetector(args.stability_window, args.stability_threshold)
+    adc_det = AdcStabilityDetector(args.stability_samples, args.stability_threshold)
     records = list(prev_records)  # 续跑时预载已有数据，确保 Excel 包含全量
     t0_total = time.time()
 
@@ -392,7 +407,7 @@ def main():
                     print(f"  已记录: {done} 点 | 上一点: {last['target']}°C ADC={last['adc_mean']:.1f}")
                 print("=" * 65)
 
-                if pv is not None and abs(pv - target) <= args.bath_tolerance and time.time() - t1 > 5:
+                if pv is not None and abs(pv - target) <= args.bath_tolerance and time.time() - t1 > 10:
                     bath_ok = True
                     break
                 time.sleep(0.4)
@@ -400,25 +415,41 @@ def main():
                 continue
 
             # ---- 等 TTAG ADC 稳定 ----
+            # 基站每帧含多个标签，目标标签约 1/40 帧才出现一次
+            # 因此只在真正收到新数据时 feed，不依赖高频轮询
             if ttag is not None:
                 adc_det.reset()
                 t2 = time.time()
                 adc_ok = False
-                while time.time() - t2 < 300:
+                last_hits = ttag.get_state().get('hits', 0)  # 跟踪新帧
+                adc_timeout = 240  # 4 分钟超时（考虑低帧率）
+                while time.time() - t2 < adc_timeout:
                     pv = wb.get_temperature()
                     pwr = wb.get_status()
                     ts = ttag.get_state()
                     adc_v = ts.get('adc')
+                    cur_hits = ts.get('hits', 0)
                     et = time.time() - t0_total
                     eta_ = (et / max(new_done, 1)) * (total - done) if new_done > 0 else 0
                     adc_el = time.time() - t2
+
+                    # 仅在新帧到达时才喂给检测器
+                    if adc_v is not None and cur_hits != last_hits:
+                        adc_det.feed(adc_v)
+                        last_hits = cur_hits
+
+                    stable, mean, rng, n, span = adc_det.check()
 
                     os.system('cls' if os.name == 'nt' else 'clear')
                     print("=" * 65)
                     print(f"  TTAG 自动标定 | 设备 {args.device} | "
                           f"{args.start}->{args.end}°C | 步进 {args.step}°C")
                     print("=" * 65)
-                    print(f"  [{disp_i}/{total}] 等待 ADC 稳定 ...")
+                    idle_sec = time.time() - (t2 + span) if span else adc_el
+                    if n >= 5:
+                        print(f"  [{disp_i}/{total}] ADC 采集中 (已收 {n} 样本) ...")
+                    else:
+                        print(f"  [{disp_i}/{total}] 等待 ADC 数据 ...")
                     print(f"  进度: {progress_bar(done, total)} {done*100//total}% | "
                           f"耗时 {et/60:.0f}min | 剩余 {eta_/60:.0f}min")
                     print("-" * 65)
@@ -428,13 +459,25 @@ def main():
                           f"d={d:.4f}°C  [OK]  加热={pwr}%")
 
                     if adc_v is not None:
-                        adc_det.feed(adc_v)
-                        stable, mean, rng, n = adc_det.check()
                         st = '*STABLE*' if stable else '-acq-'
                         n_frames = ts.get('frames', 0)
+                        n_hits = ts.get('hits', 0)
                         conn = '[LINK]' if n_frames > 0 else '[WAIT]'
-                        print(f"  TTAG: ADC={adc_v}  RSSI={ts.get('rssi')}  "
-                              f"{st}  avg={mean or 0:.1f}  d={rng}  n={n}  [{adc_el:.0f}s]  {conn}")
+                        # 帧率诊断: 总帧数/命中数
+                        diag = f'帧:{n_frames} 命中:{n_hits}'
+                        # 区分「新数据」和「旧缓存」
+                        fresh = '(旧)' if n == 0 else f'n={n}'
+                        last_seen = ts.get('last_seen', 0)
+                        since = f'| {(time.time() - last_seen):.0f}s前' if last_seen and n == 0 else ''
+                        print(f"  TTAG: ADC={adc_v} {fresh}  RSSI={ts.get('rssi')}  "
+                              f"{st}  avg={mean or 0:.1f}  rng={rng}  [{adc_el:.0f}s]  {conn}  {diag}  {since}")
+                        if n == 0 and adc_el > 15:
+                            if n_frames == 0:
+                                print(f"     ⚠ 未收到任何帧！基站未连接？")
+                            elif n_hits == 0:
+                                print(f"     ⚠ 收到 {n_frames} 帧但无目标标签 {args.device}！检查设备ID")
+                            else:
+                                print(f"     ⚠ {adc_el:.0f}s 无新数据，上次命中 {since}")
                     else:
                         print(f"  TTAG: 等待基站数据...")
                     print("-" * 65)
@@ -443,17 +486,19 @@ def main():
                         print(f"  已记录: {done} 点 | 上一点: {last['target']}°C ADC={last['adc_mean']:.1f}")
                     print("=" * 65)
 
-                    if adc_v is not None and stable:
+                    if stable:
                         adc_mean, adc_range, adc_n = mean, rng, n
                         adc_ok = True
                         break
-                    time.sleep(0.15)
+                    time.sleep(0.3)  # 降低轮询频率，反正新数据本来就慢
 
                 if not adc_ok:
+                    # 超时：用已有数据兜底
+                    _, mean, rng, n, _ = adc_det.check()
                     ts2 = ttag.get_state()
-                    adc_mean = ts2.get('adc') or 0
-                    adc_range = 0
-                    adc_n = 0
+                    adc_mean = mean if mean else (ts2.get('adc') or 0)
+                    adc_range = rng if rng else 0
+                    adc_n = n
                 adc_elapsed = time.time() - t2
             else:
                 adc_mean = adc_range = adc_n = adc_elapsed = 0
@@ -491,7 +536,7 @@ def main():
         print(f"  自动拟合 ADC → Temperature")
         print(f"{'='*50}")
         try:
-            result = fit_calibration(args.output)
+            result = fit_calibration(args.output, output_dir=output_dir)
             if result:
                 print(f"\n  ✅ {result['order']}阶多项式, maxErr={result['max_err']:.4f}°C")
             else:

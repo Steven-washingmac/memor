@@ -102,7 +102,7 @@ python ttag_calibration.py --device 230030 --start 5 --end 50 --step 0.2
 | `--start` / `--end` | 5.0 / 50.0 | 温度范围 (°C) |
 | `--step` | 0.2 | 温度步长 (°C) |
 | `--bath-tolerance` | 0.1 | 水浴稳定容差 (°C) |
-| `--stability-window` | 3.0 | ADC 稳定窗口 (秒) |
+| `--stability-samples` | 10 | ADC 稳定所需样本数（仅统计新帧） |
 | `--stability-threshold` | 2 | ADC 峰峰值阈值 |
 | `--water-bath-port` | COM3 | 水浴串口 |
 | `--ttag-port` | 20226 | 基站 TCP 端口 |

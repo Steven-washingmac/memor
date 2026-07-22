@@ -8,7 +8,7 @@ sys.path.insert(0, '.')
 # ---- 固定参数 ----
 DEVICE = 230030
 BATH_TOLERANCE = 0.1
-ADC_WINDOW = 3.0
+ADC_SAMPLES = 5
 ADC_THRESHOLD = 5
 WATER_BATH_PORT = 'COM3'
 TTAG_PORT = 20226
@@ -147,7 +147,7 @@ else:
             f' --step {step}')
 
 args += (f' --bath-tolerance {BATH_TOLERANCE}'
-         f' --stability-window {ADC_WINDOW}'
+         f' --stability-samples {ADC_SAMPLES}'
          f' --stability-threshold {ADC_THRESHOLD}'
          f' --water-bath-port {WATER_BATH_PORT}'
          f' --ttag-port {TTAG_PORT}')
