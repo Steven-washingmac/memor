@@ -26,6 +26,7 @@ pip install -r requirements.txt
 memor/
 ├── ttag_monitor.py         # 基站监听 — 实时显示标签数据
 ├── ttag_calibration.py     # 自动标定 — 水浴控制 + ADC采集 + Excel输出
+├── run_cal.py              # 一键启动器 — 自动检测续跑，预置稳定参数
 ├── water_bath_control.py   # 水浴控制 — Modbus RTU 读写（独立工具）
 ├── ttag_fitting.py         # 自动拟合 — 标定完成后自动执行，6/7 阶多项式
 ├── ttag_web.py             # Web 仪表盘 — 浏览器实时监控
