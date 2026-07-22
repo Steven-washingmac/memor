@@ -13,6 +13,7 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from water_bath_control import WaterBath
 from ttag_monitor import FRAME_HEADER, parse_frame as monitor_parse_frame
+from ttag_fitting import fit_calibration
 
 def parse_frame(data):
     """用 ttag_monitor 的解析，返回简化格式"""
@@ -381,6 +382,20 @@ def main():
     if records:
         adcs = [r['adc_mean'] for r in records]
         print(f"ADC 范围: {min(adcs):.0f} ~ {max(adcs):.0f}")
+
+        # ---- 自动拟合 ----
+        print(f"\n{'='*50}")
+        print(f"  自动拟合 ADC → Temperature")
+        print(f"{'='*50}")
+        try:
+            result = fit_calibration(args.output)
+            if result:
+                print(f"\n  ✅ {result['order']}阶多项式, maxErr={result['max_err']:.4f}°C")
+            else:
+                print(f"\n  ⚠️ 自动拟合未成功，可用 MATLAB ttag_fitting.m 手动处理")
+        except Exception as e:
+            print(f"\n  ⚠️ 自动拟合出错: {e}")
+            print(f"  可手动运行: python ttag_fitting.py {args.output}")
 
 
 if __name__ == '__main__':
