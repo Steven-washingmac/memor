@@ -74,17 +74,10 @@ class TtagReceiver:
                 print(f"  TTAG 服务端已启动: {socket.gethostbyname(socket.gethostname())}:{self.port}")
                 print(f"  等待基站连接...")
             except OSError:
-                print(f"  端口 {self.port} 被占用，尝试连接基站...")
+                print(f"  端口 {self.port} 被占用（可能已有其他程序在监听）")
+                print(f"  如需连接远程基站，使用 --connect IP:PORT")
                 sock.close()
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.settimeout(5)
-                try:
-                    sock.connect(('192.168.3.188', self.port))
-                    sock.settimeout(2.0)
-                    is_client = True
-                except Exception:
-                    print("  无法连接基站，退出")
-                    return
+                return
 
         buffer = b''
         while self.running:
@@ -209,7 +202,7 @@ def main():
         return
 
     # 初始化
-    print("连接水浴箱 COM3 ...")
+    print(f"连接水浴箱 {args.water_bath_port} ...")
     wb = WaterBath(port=args.water_bath_port)
     print(f"水浴当前: {wb.get_temperature():.3f}°C, 设定: {wb.get_setpoint()}°C")
 

@@ -1,0 +1,7 @@
+# TTAG Calibration Toolkit — Python Dependencies
+# Install: pip install -r requirements.txt
+
+openpyxl>=3.0
+pyserial>=3.5
+numpy>=1.20
+matplotlib>=3.5
