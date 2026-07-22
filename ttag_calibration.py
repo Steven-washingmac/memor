@@ -215,7 +215,7 @@ def main():
                    help='客户端模式连接基站 (如 192.168.3.188:20226)')
     p.add_argument('--water-bath-port', default='COM3', help='水浴箱串口')
     p.add_argument('--stability-window', type=float, default=3.0, help='ADC稳定窗口(秒)')
-    p.add_argument('--stability-threshold', type=int, default=2, help='ADC稳定阈值')
+    p.add_argument('--stability-threshold', type=int, default=5, help='ADC稳定峰峰值阈值(10-bit ADC建议5)')
     p.add_argument('--bath-tolerance', type=float, default=0.1, help='水浴稳定容差')
     p.add_argument('--output', default=None, help='输出 Excel 文件 (默认自动生成)')
     p.add_argument('--resume', default=None, metavar='FILE',
