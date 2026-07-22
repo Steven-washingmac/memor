@@ -1,295 +1,239 @@
-# TTAG Wireless Temperature Tag — Calibration & Monitoring Toolkit
+# TTAG 无线温度标签 — 标定与监控工具链
 
-Complete toolchain for **TRG wireless temperature tag (TTAG)** monitoring, automated calibration with a thermostatic water bath, and MATLAB-based ADC-to-temperature polynomial fitting.
+TRG 无线温度标签（TTAG）全流程工具：基站监听 → 水浴控制 → 自动标定 → 多项式拟合 → 系数导出。
 
-## Hardware
+## 硬件
 
-| Component | Model / Spec |
-|-----------|-------------|
-| Temperature Tag | TTAG wireless tag (NCP18XH103D03RB Murata 10KΩ NTC, B=3380K) |
-| Base Station | TRG wireless base station (55-AA protocol, TCP) |
-| Water Bath | Lichen (力辰) thermostatic water bath (Modbus RTU, 9600-8N1) |
-| Divider Resistor | 6.2 KΩ fixed |
-| ADC Resolution | 10-bit (0–1023) |
+| 组件 | 型号 / 规格 |
+|------|-------------|
+| 温度标签 | TTAG 无线标签（NCP18XH103D03RB Murata 10KΩ NTC, B=3380K） |
+| 基站 | TRG 无线基站（55-AA 协议, TCP Client → 连接 PC） |
+| 水浴箱 | 力辰恒温水浴（Modbus RTU, 9600-8N1, 地址 1） |
+| 分压电阻 | 6.2 KΩ 固定 |
+| ADC 分辨率 | 10-bit（0–1023） |
 
-## Project Structure
+## 快速开始（新电脑首次使用）
+
+```bash
+git clone https://github.com/Steven-washingmac/memor.git
+cd memor
+pip install -r requirements.txt
+```
+
+## 项目文件
 
 ```
 memor/
-├── ttag_monitor.py        # Real-time TTAG monitoring (TCP 55-AA protocol)
-├── ttag_calibration.py    # Automated calibration pipeline (water bath + TTAG)
-├── water_bath_control.py  # Water bath Modbus RTU controller (standalone)
-├── ttag_fitting.py        # Python: ADC→Temperature auto-fitting (runs after calibration)
-├── ttag_web.py            # Web dashboard for TTAG monitoring
-├── ttag_fitting.m         # MATLAB: ADC → Temperature polynomial fitting (alternative)
-├── ntc_fitting.m          # MATLAB: NTC thermistor lookup-table fitting
-├── ntc_fit_6.m            # MATLAB: Alternative NTC fitting (6th order)
-├── ntcb.csv               # NTC resistance-temperature lookup data
-├── requirements.txt       # Python dependencies (pip install -r requirements.txt)
+├── ttag_monitor.py         # 基站监听 — 实时显示标签数据
+├── ttag_calibration.py     # 自动标定 — 水浴控制 + ADC采集 + Excel输出
+├── water_bath_control.py   # 水浴控制 — Modbus RTU 读写（独立工具）
+├── ttag_fitting.py         # 自动拟合 — 标定完成后自动执行，6/7 阶多项式
+├── ttag_web.py             # Web 仪表盘 — 浏览器实时监控
+├── ttag_fitting.m          # MATLAB 拟合（备用手动方案）
+├── ntc_fitting.m           # MATLAB NTC 查表拟合
+├── ntc_fit_6.m             # MATLAB NTC 6 阶拟合
+├── ntcb.csv                # NTC 电阻-温度查表数据
+├── requirements.txt        # Python 依赖清单
 └── README.md
 ```
 
 ---
 
-## File Descriptions
+## 使用流程
 
-### 1. `ttag_monitor.py` — Real-Time TTAG Monitor
+### 第一步：验证硬件连接
 
-**Purpose:** Listens for TRG base station 55-AA protocol frames over TCP, parses wireless tag data (RSSI, type, ID, ADC), and displays real-time info.
-
-**Key Features:**
-- TCP Server mode (default): listens on `0.0.0.0:20226`, waits for base station connection
-- TCP Client mode (`--connect IP:PORT`): connects to remote base station
-- Multi-layer filtering: tag type, ID range, ADC validity
-- Real-time terminal display with per-tag status
-- CSV data export
-- Interactive command shell for runtime rule management
-- ADC stability detection (sliding window)
-
-**Usage:**
 ```bash
-python ttag_monitor.py                          # Server mode, type 0x00 only
-python ttag_monitor.py --type 0x00,0x01,0x03   # Multiple tag types
-python ttag_monitor.py --device 230030           # Single device tracking
-python ttag_monitor.py --connect 192.168.3.188:20226  # Client mode
-python ttag_monitor.py --export data.csv         # Export to CSV
+# 1. 测试水浴箱（COM3 是默认串口，不是 COM3 的话加 --water-bath-port COM5）
+python water_bath_control.py                # 读取当前温度
+python water_bath_control.py 25.0           # 设定 25°C
+python water_bath_control.py --monitor      # 持续监控（Ctrl+C 停止）
+
+# 2. 测试基站数据
+python ttag_monitor.py --device 230030                    # 服务端模式（基站主动连接 PC）
+python ttag_monitor.py --connect 192.168.3.188:20226      # 客户端模式（PC 主动连接基站）
 ```
 
----
+> **基站连接说明**：基站是 **TCP 客户端**，默认会主动连接 PC。因此 PC 端一般使用**服务端模式**（不加 `--connect`），监听 `0.0.0.0:20226` 等待基站连接即可。
 
-### 2. `ttag_calibration.py` — Automated Calibration Pipeline
+### 第二步：运行标定
 
-**Purpose:** Fully automated calibration workflow — controls the water bath through a temperature sweep, captures TTAG ADC readings at each point, validates stability, and outputs calibration data to Excel.
-
-**Workflow:**
-1. Sets water bath to target temperature via Modbus
-2. Monitors bath PV (actual temperature) until stable within ±tolerance
-3. Collects TTAG ADC values from base station
-4. Waits for ADC stability (sliding window, peak-to-peak ≤ threshold)
-5. Records actual temperature + ADC mean to Excel
-6. Repeats for each temperature point
-
-**Key Parameters:**
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `--start` / `--end` | 5.0 / 50.0 | Temperature range (°C) |
-| `--step` | 0.2 | Temperature step (°C) |
-| `--bath-tolerance` | 0.1 | Bath stability tolerance (°C) |
-| `--stability-window` | 3.0 | ADC stability window (seconds) |
-| `--stability-threshold` | 2 | ADC peak-to-peak threshold |
-
-**Usage:**
 ```bash
-# Small test: 5°C → 8°C
+# === 推荐：先小范围测试（5°C → 8°C，约 16 个点，几分钟） ===
 python ttag_calibration.py --device 230030 --start 5 --end 8 --step 0.2
 
-# Full calibration: 5°C → 50°C (226 points)
+# === 全量标定（5°C → 50°C，约 226 个点） ===
 python ttag_calibration.py --device 230030 --start 5 --end 50 --step 0.2
-
-# Preview without running
-python ttag_calibration.py --device 230030 --dry-run
-
-# Skip TTAG (water bath only)
-python ttag_calibration.py --device 230030 --no-ttag --start 5 --end 8 --step 0.2
 ```
 
-**Output:** `calibration_data.xlsx` — contains target temp, actual temp, ADC mean, ADC range, sample count, timestamp per point.
+**标定过程**：程序自动执行以下循环（每个温度点）：
+1. 通过 Modbus 设定水浴目标温度
+2. 等待水浴实际温度稳定（±0.1°C 以内）
+3. 采集基站发来的标签 ADC 数据
+4. 等待 ADC 稳定（滑动窗口内峰峰值 ≤ 2）
+5. 记录数据 → 写入 Excel + CSV
+6. 进入下一个温度点
 
-**Dependencies:** `pip install openpyxl pyserial`
+**标定完成后**自动执行多项式拟合（6 阶、7 阶），生成拟合曲线图和系数文件。
+
+### 第三步：查看结果
+
+标定跑完后，程序自动输出以下文件：
+
+| 文件 | 说明 |
+|------|------|
+| `cal_230030_0722_1530.xlsx` | 标定原始数据（每 5 个点存一次） |
+| `cal_230030_0722_1530.csv` | 逐点后备数据（每个点立即写入，防崩溃） |
+| `cal_230030_0722_1530_fit.png` | 拟合曲线对比图 + 误差分布 |
+| `cal_230030_0722_1530_coeffs.txt` | 多项式系数存档 |
+
+文件名格式：`cal_{设备ID}_{月日}_{时分}.xlsx`，每次运行生成新文件，不会覆盖历史数据。
 
 ---
 
-### 3. `water_bath_control.py` — Water Bath Modbus Controller
+## 参数速查
 
-**Purpose:** Standalone control and monitoring of the Lichen thermostatic water bath via Modbus RTU.
+### `ttag_calibration.py` — 全部参数
 
-**Discovered Register Map:**
-| Register | Access | Scale | Description |
-|----------|--------|-------|-------------|
-| `0x0100` | Read | ÷100 | PV — Current actual temperature (e.g. 499 = 4.99°C) |
-| `0x010A` | Write | ×10 | SV — Target setpoint temperature (e.g. 50 = 5.0°C) |
-| `0x0105` | Read | raw | Heating output percentage |
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--device` | 必填 | 标签 ID |
+| `--start` / `--end` | 5.0 / 50.0 | 温度范围 (°C) |
+| `--step` | 0.2 | 温度步长 (°C) |
+| `--bath-tolerance` | 0.1 | 水浴稳定容差 (°C) |
+| `--stability-window` | 3.0 | ADC 稳定窗口 (秒) |
+| `--stability-threshold` | 2 | ADC 峰峰值阈值 |
+| `--water-bath-port` | COM3 | 水浴串口 |
+| `--ttag-port` | 20226 | 基站 TCP 端口 |
+| `--connect IP:PORT` | — | 客户端模式（PC 主动连基站） |
+| `--output` | 自动生成 | 指定输出文件名 |
+| `--resume FILE` | — | 从已有文件断点续跑 |
+| `--no-ttag` | — | 跳过 TTAG（仅测试水浴） |
+| `--dry-run` | — | 预览标定计划，不实际执行 |
 
-**Usage:**
+### `ttag_monitor.py` — 常用参数
+
+| 参数 | 说明 |
+|------|------|
+| `--device ID` | 只显示指定标签 |
+| `--type 0x00,0x01` | 过滤标签类型 |
+| `--connect IP:PORT` | 客户端模式 |
+| `--export file.csv` | 导出数据到 CSV |
+| `--debug` | 显示所有帧（含解析失败） |
+
+### `water_bath_control.py` — 用法
+
 ```bash
-python water_bath_control.py              # Read current status
-python water_bath_control.py 25.0         # Set target to 25.0°C
-python water_bath_control.py --monitor    # Continuous monitoring
+python water_bath_control.py            # 查看当前状态
+python water_bath_control.py 30.0       # 设定 30°C
+python water_bath_control.py --monitor  # 持续监控
 ```
-
-**Dependencies:** `pip install pyserial`
 
 ---
 
-### 4. `ttag_fitting.py` — Python ADC→Temperature Auto-Fitting
+## 断点续跑（`--resume`）
 
-**Purpose:** Automatically runs after calibration completes. Reads the Excel output, performs 6th- and 7th-order polynomial fitting of ADC → Temperature, picks the best fit with max error < 0.1°C, and generates outputs.
+如果标定程序意外中断（如断电、Modbus 超时、Ctrl+C），可以接着上次的进度继续，无需从头开始：
 
-**Outputs:**
-- `<excel_name>_fit.png` — dual-panel plot (fitted curve + error distribution)
-- `<excel_name>_coeffs.txt` — polynomial coefficients for archival
-- Console: ready-to-paste `adc_to_temperature()` Python function
-
-**Standalone usage:**
 ```bash
-python ttag_fitting.py calibration_data.xlsx
+# 从 Excel 或 CSV 文件续跑
+python ttag_calibration.py --resume cal_230030_0722_1530.xlsx --end 50
+python ttag_calibration.py --resume cal_230030_0722_1530.csv --end 50
 ```
 
-**Dependencies:** `pip install numpy matplotlib openpyxl`
+程序会自动：
+- 从文件中解析设备 ID、已完成温度点、步长
+- 跳过已完成的点，从下一个温度继续
+- 生成**带新时间戳**的输出文件，不覆盖原文件
+- 仪表盘标题显示 `[续跑]` 标记，进度条计入已完成的点数
+
+> **CSV 后备文件**的作用就在于此——即使意外崩溃导致 Excel 还没写出，CSV 也是逐点实时写入的，最多丢 1 个点。
 
 ---
 
-### 5. `ttag_fitting.m` — MATLAB ADC→Temperature Fitting (Alternative)
+## 自动拟合
 
-**Purpose:** MATLAB alternative to `ttag_fitting.py`. Reads `calibration_data.xlsx`, performs polynomial fitting, and finds the optimal polynomial order.
+标定程序完成后**自动调用** `ttag_fitting.py`，无需手动操作。
 
-> **Note:** You must update the file path inside the script before running on a different computer.
+也可以对任意标定 Excel 单独运行：
 
-**Usage (MATLAB):**
-```matlab
-run('ttag_fitting.m')
+```bash
+python ttag_fitting.py cal_230030_0722_1530.xlsx
+```
+
+拟合逻辑：
+1. 读取 Excel 中的 ADC 均值 和 水浴实际温度
+2. 过滤异常点（ADC ≤ 0 或 ADC ≥ 1024）
+3. ADC 归一化到 [-1, 1]
+4. 分别用 6 阶和 7 阶多项式拟合
+5. 选出误差更优的方案（要求 maxErr < 0.1°C）
+6. 输出拟合曲线图 + 系数文件 + 可直接粘贴的 Python 温度转换函数
+
+---
+
+## 工作流程图
+
+```
+1. [Modbus]    设定水浴目标温度 → SV 寄存器 (0x010A)
+2. [Modbus]    轮询 PV 寄存器 (0x0100) 直到 |PV - Target| ≤ 容差
+3. [TCP 55-AA] 从基站采集标签 ADC 数据
+4. [Stability] 滑动窗口验证 ADC 稳定 (峰峰值 ≤ 阈值)
+5. [Record]    记录 (目标温度, 实际温度, ADC均值) → Excel + CSV
+6. [Repeat]    步进到下一个温度点
+7. [Auto-Fit]  标定结束 → 自动 6/7 阶多项式拟合 (maxErr < 0.1°C)
+8. [Output]    输出拟合图 (*_fit.png) + 系数文件 (*_coeffs.txt)
 ```
 
 ---
 
-### 6. `ntc_fitting.m` / `ntc_fit_6.m` — NTC Lookup-Table Fitting
+## 协议参考
 
-**Purpose:** Fits the NTC thermistor's resistance-temperature curve using pre-computed lookup data (`ntcb.csv`). Used as a reference / validation against the empirical calibration.
-
----
-
-### 7. `ttag_web.py` — Web Dashboard
-
-**Purpose:** Browser-based real-time monitoring dashboard for TTAG tag data, providing a graphical alternative to the terminal-based `ttag_monitor.py`.
-
----
-
-## Protocol Reference
-
-### 55-AA Frame Structure
+### 55-AA 帧结构
 
 ```
 55 AA | Length | StationID | FuncCode | SN | TagCount | TagBlocks × N | Checksum
  2B   | 2B LE  |   2B LE   |    1B    | 1B |    1B    |    9B × N     |    1B
 ```
 
-### Tag Block (9 bytes per tag)
+### 标签块（每标签 9 字节）
 
-| Offset | Size | Field |
-|--------|------|-------|
-| +0 | 1B | RSSI (signal strength) |
-| +1 | 1B | Tag type |
-| +2 | 3B | Tag ID (little-endian, LSB first) |
-| +5 | 2B | ADC value (little-endian) |
-| +7 | 2B | Reserved |
+| 偏移 | 大小 | 字段 |
+|------|------|------|
+| +0 | 1B | RSSI（信号强度） |
+| +1 | 1B | 标签类型 |
+| +2 | 3B | 标签 ID（小端序, 低字节在前） |
+| +5 | 2B | ADC 值（小端序） |
+| +7 | 2B | 保留 |
 
-- ADC = `0xFFFF` (65535) indicates low battery
-- Tag ID example: bytes `8E 82 03` = 0x03828E = 230030
+- ADC = `0xFFFF` (65535) 表示低电量
+- 标签 ID 示例：字节 `8E 82 03` = 0x03828E = 230030
+
+### 水浴箱 Modbus 寄存器
+
+| 寄存器 | 读写 | 缩放 | 说明 |
+|--------|------|------|------|
+| `0x0100` | 读 | ÷100 | PV — 当前实际温度（如 499 = 4.99°C） |
+| `0x010A` | 写 | ×10 | SV — 目标设定温度（如 50 = 5.0°C） |
+| `0x0105` | 读 | raw | 加热输出百分比 |
 
 ---
 
-## Calibration Pipeline Overview
+## 常见问题
 
-```
-1. [Modbus]    Set water bath target → SV register (0x010A)
-2. [Modbus]    Poll PV register (0x0100) until |PV - Target| <= tolerance
-3. [TCP 55AA]  Collect ADC samples from base station
-4. [Stability] Verify ADC stable (sliding window, pk-pk <= threshold)
-5. [Record]    Save (target_temp, actual_temp, adc_mean) to Excel
-6. [Repeat]    Move to next temperature step
-7. [Auto-Fit]  Run 6th/7th-order polynomial fitting (ADC → Temperature), verify < 0.1°C error
-8. [Output]    Save fitting chart (*_fit.png) + coefficients (*_coeffs.txt)
-```
+**Q: 基站连不上？**
+- 确认基站已上电，且连接到与 PC 同网段（`192.168.3.x`）
+- 默认使用服务端模式（PC 监听 20226 端口，基站主动连接）
+- 如果基站是服务端模式，改用 `--connect 基站IP:20226`
 
-## Quick Start
+**Q: 水浴箱没有响应？**
+- 确认串口号：`--water-bath-port COM5`（在设备管理器查看）
+- 确认水浴箱 Modbus 地址为 1，波特率 9600-8N1
 
-### Prerequisites
+**Q: ADC 一直是 0 或 None？**
+- 确认基站已连接（仪表盘显示 `[LINK]`）
+- 确认标签设备 ID 正确
+- 标签是否在基站接收范围内
 
-```bash
-# Install Python dependencies
-pip install openpyxl pyserial
-```
-
-### Terminal Launch Commands
-
-All commands below are run from the project directory. Copy and paste directly into PowerShell or CMD:
-
-```bash
-# Clone and enter project folder
-git clone https://github.com/Steven-washingmac/memor.git
-cd memor
-pip install -r requirements.txt
-```
-
-#### 1. Test Water Bath Connection
-
-```bash
-# Read current water bath temperature and setpoint
-python water_bath_control.py
-
-# Set water bath to 25.0°C
-python water_bath_control.py 25.0
-
-# Continuous monitoring mode (Ctrl+C to stop)
-python water_bath_control.py --monitor
-```
-
-#### 2. Test TTAG Data Reception
-
-```bash
-# Server mode - listen for base station connection
-python ttag_monitor.py --device 230030
-
-# Show all tag types
-python ttag_monitor.py --type 0x00,0x01,0x02,0x03,0x50 --debug
-
-# Client mode - connect to remote base station
-python ttag_monitor.py --connect 192.168.3.188:20226 --device 230030
-
-# Export data to CSV
-python ttag_monitor.py --device 230030 --export data.csv
-```
-
-#### 3. Run Automated Calibration
-
-```bash
-# Preview calibration plan without running (dry-run mode)
-python ttag_calibration.py --device 230030 --dry-run
-
-# Small test run: 5°C → 8°C (16 points, ~3-5 minutes)
-python ttag_calibration.py --device 230030 --start 5 --end 8 --step 0.2
-
-# Full calibration: 5°C → 50°C (226 points)
-python ttag_calibration.py --device 230030 --start 5 --end 50 --step 0.2
-
-# Water bath only (skip TTAG - for testing bath control)
-python ttag_calibration.py --device 230030 --no-ttag --start 5 --end 8 --step 0.2
-
-# Resume from previous run (auto-detects device, completed temps, step)
-python ttag_calibration.py --resume cal_230030_0722_1530.xlsx --end 50
-python ttag_calibration.py --resume cal_230030_0722_1530.csv --end 50
-```
-
-#### 4. Fitting (runs automatically after calibration)
-
-```bash
-# Auto-runs after calibration completes — no manual step needed.
-# Or run standalone on any calibration Excel:
-python ttag_fitting.py calibration_data.xlsx
-```
-
-#### 5. MATLAB Fitting (alternative, optional)
-
-```matlab
-% Open MATLAB, update the file path inside the script, then run:
-run('ttag_fitting.m')
-```
-
-### Output Files
-
-| File | Generated By | Description |
-|------|-------------|-------------|
-| `cal_*.xlsx` | `ttag_calibration.py` | Raw calibration data (auto-timestamped: `cal_{device}_{MMDD}_{HHMM}.xlsx`) |
-| `cal_*.csv` | `ttag_calibration.py` | Per-point CSV backup (written immediately each point) |
-| `cal_*_fit.png` | `ttag_fitting.py` (auto) | Comparison plot: fitted curve vs raw data + error distribution |
-| `cal_*_coeffs.txt` | `ttag_fitting.py` (auto) | Polynomial coefficients for Python integration |
+**Q: 程序意外退出了怎么办？**
+- CSV 文件已保存所有完成的数据点
+- 用 `--resume` 继续：`python ttag_calibration.py --resume cal_xxx.csv --end 50`
