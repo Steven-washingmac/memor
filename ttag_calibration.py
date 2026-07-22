@@ -355,6 +355,7 @@ def main():
             done = len(records)
             total = len(temps) + len(completed_set)
             disp_i = i + 1 + len(completed_set)
+            new_done = done - len(prev_records)  # 本次实际完成点数（不含续跑旧数据）
 
             # ---- 等水浴稳定 ----
             t1 = time.time()
@@ -364,7 +365,7 @@ def main():
                 pwr = wb.get_status()
                 ts = ttag.get_state() if ttag else {}
                 elapsed_t = time.time() - t0_total
-                eta = (elapsed_t / max(done, 1)) * (total - done) if done > 0 else 0
+                eta = (elapsed_t / max(new_done, 1)) * (total - done) if new_done > 0 else 0
 
                 os.system('cls' if os.name == 'nt' else 'clear')
                 print("=" * 65)
@@ -409,7 +410,7 @@ def main():
                     ts = ttag.get_state()
                     adc_v = ts.get('adc')
                     et = time.time() - t0_total
-                    eta_ = (et / max(done, 1)) * (total - done) if done > 0 else 0
+                    eta_ = (et / max(new_done, 1)) * (total - done) if new_done > 0 else 0
                     adc_el = time.time() - t2
 
                     os.system('cls' if os.name == 'nt' else 'clear')
