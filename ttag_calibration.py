@@ -165,8 +165,9 @@ def progress_bar(done, total, width=30):
 
 
 def resume_from_file(filepath):
-    """解析已有标定文件 (Excel 或 CSV), 返回 (device_id, completed_temps, step)"""
+    """解析已有标定文件 (Excel 或 CSV), 返回 (device_id, completed_temps, step, prev_records)"""
     completed = []
+    prev_records = []
     device_id = None
 
     if filepath.endswith('.csv'):
@@ -175,9 +176,16 @@ def resume_from_file(filepath):
             next(reader, None)  # skip header
             for row in reader:
                 try:
-                    completed.append(float(row[2]))  # Target(C)
+                    target = float(row[2])
+                    completed.append(target)
                     if device_id is None:
-                        device_id = int(row[1])       # TagID
+                        device_id = int(row[1])
+                    prev_records.append({
+                        'target': target, 'actual': float(row[3]),
+                        'adc_mean': float(row[4]), 'adc_range': int(row[5]),
+                        'adc_n': int(row[6]), 'elapsed': float(row[7]),
+                        'ts': row[8] if len(row) > 8 else '',
+                    })
                 except (ValueError, IndexError):
                     continue
     else:
@@ -187,21 +195,31 @@ def resume_from_file(filepath):
             ws = wb.active
             for row in ws.iter_rows(min_row=2, values_only=True):
                 try:
-                    completed.append(float(row[2]))
+                    target = float(row[2])
+                    completed.append(target)
                     if device_id is None:
                         device_id = int(row[1])
+                    prev_records.append({
+                        'target': target,
+                        'actual': float(row[3]) if row[3] is not None else target,
+                        'adc_mean': float(row[4]) if row[4] is not None else 0,
+                        'adc_range': int(row[5]) if row[5] is not None else 0,
+                        'adc_n': int(row[6]) if row[6] is not None else 0,
+                        'elapsed': float(row[7]) if row[7] is not None else 0,
+                        'ts': str(row[8]) if row[8] is not None else '',
+                    })
                 except (ValueError, TypeError):
                     continue
             wb.close()
-        except Exception:
-            print(f"无法读取文件: {filepath}")
-            return None, [], None
+        except Exception as e:
+            print(f"无法读取文件: {filepath} ({e})")
+            return None, [], None, []
 
     step = 0.2
     if len(completed) >= 2:
         step = round(completed[1] - completed[0], 2)
 
-    return device_id, sorted(set(completed)), step
+    return device_id, sorted(set(completed)), step, prev_records
 
 
 def main():
@@ -227,11 +245,12 @@ def main():
     # ---- 断点续跑 ----
     resumed_from = None
     completed_set = set()
+    prev_records = []
     if args.resume:
         if not os.path.exists(args.resume):
             print(f"文件不存在: {args.resume}")
             return
-        dev_id, completed, file_step = resume_from_file(args.resume)
+        dev_id, completed, file_step, prev_records = resume_from_file(args.resume)
         if dev_id is None:
             print(f"无法从 {args.resume} 解析数据")
             return
@@ -311,7 +330,7 @@ def main():
         time.sleep(1)
 
     adc_det = AdcStabilityDetector(args.stability_window, args.stability_threshold)
-    records = []
+    records = list(prev_records)  # 续跑时预载已有数据，确保 Excel 包含全量
     t0_total = time.time()
 
     def save_excel():
@@ -333,7 +352,7 @@ def main():
     try:
         for i, target in enumerate(temps):
             wb.set_temperature(target)
-            done = len(records) + len(completed_set)
+            done = len(records)
             total = len(temps) + len(completed_set)
             disp_i = i + 1 + len(completed_set)
 
@@ -447,7 +466,7 @@ def main():
                 'adc_n': adc_n, 'elapsed': adc_elapsed, 'ts': ts_str,
             })
             # 每点立即写 CSV (后备), 每 5 点写 Excel
-            save_csv_row([len(records) + len(completed_set), args.device,
+            save_csv_row([len(records), args.device,
                          target, pv_now, round(adc_mean, 1), adc_range,
                          adc_n, round(adc_elapsed), ts_str, ''])
             if len(records) % 5 == 0:
