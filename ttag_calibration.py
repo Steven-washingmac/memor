@@ -1,31 +1,11 @@
 #!/usr/bin/env python3
 """
-TTAG Auto-Calibration System (v2)
-===================================
-Integrates water bath control (Modbus RTU) + TTAG wireless tag monitoring
-(TCP 55-AA protocol) + real-time dashboard + Excel output for automated
-temperature calibration of wireless temperature tags (NTC thermistor).
+TTAG 自动标定系统 (v2)
+整合: 水浴箱控制(Modbus) + TTAG监测(TCP 55AA) + 实时仪表盘 + Excel输出
 
-Hardware:
-  - TRG wireless base station (55-AA protocol over TCP, port 20226)
-  - Lichen (力辰) thermostatic water bath (Modbus RTU 9600-8N1, addr 1)
-  - TTAG wireless temperature tags (NCP18XH103D03RB NTC, 6.2K divider)
-
-Workflow:
-  1. Sets water bath target temperature via Modbus
-  2. Waits for bath temperature (PV) to stabilize within tolerance
-  3. Collects TTAG ADC values via TCP from base station
-  4. Waits for ADC stability (sliding window, peak-to-peak <= threshold)
-  5. Records actual bath temperature + ADC mean to Excel
-  6. Repeats for each temperature step across the full range
-
-Dependencies:
-  pip install openpyxl pyserial
-
-Usage:
+用法:
   python ttag_calibration.py --device 230030 --start 5 --end 8 --step 0.2
-  python ttag_calibration.py --device 230030 --start 5 --end 50 --step 0.2
-  python ttag_calibration.py --device 230030 --dry-run  (preview without running)
+  python ttag_calibration.py --device 230030 --start 5 --end 50 --step 0.2 --bath-tolerance 0.05
 """
 import sys, os, time, struct, socket, threading, argparse
 from collections import deque
@@ -338,8 +318,9 @@ def main():
                     print(f"  进度: {progress_bar(done, total)} {done*100//total}% | "
                           f"耗时 {et/60:.0f}min | 剩余 {eta_/60:.0f}min")
                     print("-" * 65)
-                    d = abs(pv - target) if pv else 0
-                    print(f"  水浴: PV={pv:.4f}°C  目标={target}°C  "
+                    d = abs(pv - target) if pv is not None else 0
+                    pv_str = f"{pv:.4f}" if pv is not None else "?"
+                    print(f"  水浴: PV={pv_str}°C  目标={target}°C  "
                           f"d={d:.4f}°C  [OK]  加热={pwr}%")
 
                     if adc_v is not None:
