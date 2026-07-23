@@ -408,8 +408,12 @@ def main():
                 print("=" * 65)
 
                 if pv is not None and abs(pv - target) <= args.bath_tolerance and time.time() - t1 > 10:
-                    bath_ok = True
-                    break
+                    # 二次确认：等 2 秒再读一次，防止 Modbus 瞬时异常
+                    time.sleep(2)
+                    pv2 = wb.get_temperature()
+                    if pv2 is not None and abs(pv2 - target) <= args.bath_tolerance:
+                        bath_ok = True
+                        break
                 time.sleep(0.4)
             if not bath_ok:
                 continue
