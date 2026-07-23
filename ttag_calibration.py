@@ -289,11 +289,13 @@ def main():
 
     temps = []
     t = args.start
-    while t <= args.end + args.step / 2:
+    descending = args.start > args.end
+    step = -abs(args.step) if descending else abs(args.step)
+    while (t >= args.end - abs(step) / 2) if descending else (t <= args.end + step / 2):
         tp = round(t, 1)
         if tp not in completed_set:
             temps.append(tp)
-        t += args.step
+        t += step
 
     # CSV 后备文件
     csv_path = args.output.replace('.xlsx', '.csv')

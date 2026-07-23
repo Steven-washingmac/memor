@@ -124,9 +124,11 @@ else:
 # ---- 4. 预览并确认 ----
 temps = []
 t = start
-while t <= end + step / 2:
+descending = start > end
+step_dir = -abs(step) if descending else abs(step)
+while (t >= end - abs(step_dir) / 2) if descending else (t <= end + step_dir / 2):
     temps.append(round(t, 1))
-    t += step
+    t += step_dir
 
 print(f'\n标定计划: {len(temps)} 点, {start} -> {end} C, 步长 {step} C')
 if resume and completed_info:
