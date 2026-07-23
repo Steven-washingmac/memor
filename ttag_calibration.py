@@ -138,7 +138,7 @@ class AdcStabilityDetector:
 
     仅在实际收到新帧时 feed()，收集 min_samples 个样本后检查峰峰值。
     """
-    def __init__(self, min_samples=5, threshold=5):
+    def __init__(self, min_samples=10, threshold=5):
         self.min_samples = min_samples; self.threshold = threshold
         self._samples = []  # [(ts, adc), ...]
 
@@ -240,7 +240,7 @@ def main():
     p.add_argument('--connect', default=None, metavar='IP:PORT',
                    help='客户端模式连接基站 (如 192.168.3.188:20226)')
     p.add_argument('--water-bath-port', default='COM3', help='水浴箱串口')
-    p.add_argument('--stability-samples', type=int, default=5, help='ADC稳定所需样本数(目标标签约每40帧出现1次)')
+    p.add_argument('--stability-samples', type=int, default=10, help='ADC稳定所需样本数')
     p.add_argument('--stability-threshold', type=int, default=5, help='ADC峰峰值阈值(10-bit ADC建议5)')
     p.add_argument('--bath-tolerance', type=float, default=0.1, help='水浴稳定容差')
     p.add_argument('--output', default=None, help='输出 Excel 文件 (默认自动生成)')

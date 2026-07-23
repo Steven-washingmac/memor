@@ -6,9 +6,9 @@ os.chdir(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, '.')
 
 # ---- 固定参数 ----
-DEVICE = 230030
+DEVICE = 195082
 BATH_TOLERANCE = 0.1
-ADC_SAMPLES = 5
+ADC_SAMPLES = 10
 ADC_THRESHOLD = 5
 WATER_BATH_PORT = 'COM3'
 TTAG_PORT = 20226
@@ -85,6 +85,14 @@ if resume and completed_info:
 else:
     while True:
         try:
+            d = input(f'设备ID (默认 195082): ').strip()
+            device_id = int(d) if d else 195082
+            break
+        except ValueError:
+            print('  请输入数字')
+
+    while True:
+        try:
             s = input(f'起始温度 (默认 5.0): ').strip()
             start = float(s) if s else 5.0
             break
@@ -141,7 +149,7 @@ if resume and completed_info:
             f' --end {end}'
             f' --step {step}')
 else:
-    args = (f'--device {DEVICE}'
+    args = (f'--device {device_id}'
             f' --start {start}'
             f' --end {end}'
             f' --step {step}')
