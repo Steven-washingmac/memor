@@ -375,6 +375,8 @@ def main():
             # ---- 等水浴稳定 ----
             t1 = time.time()
             bath_ok = False
+            pv_first = None  # 首读 PV，判断加热/降温方向
+            need_cool = False
             while time.time() - t1 < 900:
                 pv = wb.get_temperature()
                 pwr = wb.get_status()
@@ -382,19 +384,30 @@ def main():
                 elapsed_t = time.time() - t0_total
                 eta = (elapsed_t / max(new_done, 1)) * (total - done) if new_done > 0 else 0
 
+                # 确定方向：PV 高于目标 → 需要降温
+                if pv_first is None and pv is not None:
+                    pv_first = pv
+                    need_cool = pv > target + args.bath_tolerance
+
                 os.system('cls' if os.name == 'nt' else 'clear')
                 print("=" * 65)
                 resume_tag = ' [续跑]' if resumed_from else ''
                 print(f"  TTAG 自动标定{resume_tag} | 设备 {args.device} | "
                       f"{args.start}->{args.end}°C | 步进 {args.step}°C")
                 print("=" * 65)
-                print(f"  [{disp_i}/{total}] 等待水浴稳定到 {target}°C ...")
+                cooling_hint = ' [降温中]' if need_cool else ''
+                print(f"  [{disp_i}/{total}] 等待水浴稳定到 {target}°C ...{cooling_hint}")
                 print(f"  进度: {progress_bar(done, total)} {done*100//total}% | "
                       f"耗时 {elapsed_t/60:.0f}min | 剩余 {eta/60:.0f}min")
                 print("-" * 65)
                 if pv is not None:
                     d = abs(pv - target)
-                    bs = '[OK]' if d <= args.bath_tolerance else '...'
+                    # 方向性判定: 降温要求 pv ≤ target+tol, 升温要求 pv ≥ target-tol
+                    if need_cool:
+                        reached = pv <= target + args.bath_tolerance
+                    else:
+                        reached = pv >= target - args.bath_tolerance
+                    bs = '[OK]' if (reached and d <= args.bath_tolerance) else '...'
                     print(f"  水浴: PV={pv:.4f}°C  目标={target}°C  "
                           f"d={d:.4f}°C  {bs}  加热={pwr}%")
                 adc_v = ts.get('adc')
@@ -407,13 +420,18 @@ def main():
                     print(f"  已记录: {done} 点 | 上一点: {last['target']}°C ADC={last['adc_mean']:.1f}")
                 print("=" * 65)
 
-                if pv is not None and abs(pv - target) <= args.bath_tolerance and time.time() - t1 > 10:
-                    # 二次确认：等 2 秒再读一次，防止 Modbus 瞬时异常
+                # 方向性稳定判定 + 二次确认
+                if pv is not None and reached and abs(pv - target) <= args.bath_tolerance and time.time() - t1 > 10:
                     time.sleep(2)
                     pv2 = wb.get_temperature()
-                    if pv2 is not None and abs(pv2 - target) <= args.bath_tolerance:
-                        bath_ok = True
-                        break
+                    if pv2 is not None:
+                        if need_cool:
+                            ok = pv2 <= target + args.bath_tolerance and abs(pv2 - target) <= args.bath_tolerance
+                        else:
+                            ok = pv2 >= target - args.bath_tolerance and abs(pv2 - target) <= args.bath_tolerance
+                        if ok:
+                            bath_ok = True
+                            break
                 time.sleep(0.4)
             if not bath_ok:
                 continue
