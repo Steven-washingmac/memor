@@ -138,7 +138,7 @@ class AdcStabilityDetector:
 
     仅在实际收到新帧时 feed()，收集 min_samples 个样本后检查峰峰值。
     """
-    def __init__(self, min_samples=10, threshold=5):
+    def __init__(self, min_samples=5, threshold=5):
         self.min_samples = min_samples; self.threshold = threshold
         self._samples = []  # [(ts, adc), ...]
 
@@ -150,7 +150,7 @@ class AdcStabilityDetector:
     def check(self):
         """返回 (stable, mean, peak_to_peak, n_samples, elapsed_sec)"""
         n = len(self._samples)
-        if n < max(self.min_samples, 5):  # 至少 5 个样本才开始评估
+        if n < self.min_samples:
             elapsed = self._samples[-1][0] - self._samples[0][0] if n >= 2 else 0
             return False, None, None, n, elapsed
         adcs = [a for _, a in self._samples]
@@ -240,8 +240,8 @@ def main():
     p.add_argument('--connect', default=None, metavar='IP:PORT',
                    help='客户端模式连接基站 (如 192.168.3.188:20226)')
     p.add_argument('--water-bath-port', default='COM3', help='水浴箱串口')
-    p.add_argument('--stability-samples', type=int, default=10, help='ADC稳定所需样本数')
-    p.add_argument('--stability-threshold', type=int, default=5, help='ADC峰峰值阈值(10-bit ADC建议5)')
+    p.add_argument('--stability-samples', type=int, default=5, help='ADC稳定所需样本数')
+    p.add_argument('--stability-threshold', type=int, default=5, help='ADC峰峰值阈值')
     p.add_argument('--bath-tolerance', type=float, default=0.1, help='水浴稳定容差')
     p.add_argument('--output', default=None, help='输出 Excel 文件 (默认自动生成)')
     p.add_argument('--resume', default=None, metavar='FILE',
@@ -364,7 +364,7 @@ def main():
                           round(r['elapsed']), r['ts'], r.get('note', '')])
             wb_xl.save(args.output)
         except Exception as e:
-            pass
+            print(f"\n  ⚠ Excel 保存失败: {e}")
 
     try:
         for i, target in enumerate(temps):
@@ -379,6 +379,9 @@ def main():
             bath_ok = False
             pv_first = None  # 首读 PV，判断加热/降温方向
             need_cool = False
+            nudge_sv = None  # 临时推一把的设定值
+            nudge_t = 0.0    # 进入推模式的时间
+            last_pwr_zero = 0.0  # 加热/制冷归零的时刻
             while time.time() - t1 < 900:
                 pv = wb.get_temperature()
                 pwr = wb.get_status()
@@ -391,6 +394,41 @@ def main():
                     pv_first = pv
                     need_cool = pv > target + args.bath_tolerance
 
+                # ==== 推一把 (nudge)：水浴控制器死区太宽，自己停了 ====
+                # 检测条件：差 0.15°C 以上，输出归零 > 15 秒，还没在推模式
+                if pv is not None and nudge_sv is None and time.time() - t1 > 20:
+                    gap = abs(pv - target)
+                    # 加热方向：PV 不够高，但加热已经归零
+                    if not need_cool and pv < target - args.bath_tolerance and pwr is not None and pwr == 0:
+                        if last_pwr_zero == 0:
+                            last_pwr_zero = time.time()
+                        elif time.time() - last_pwr_zero > 15 and gap > 0.15:
+                            nudge_sv = min(100, target + 2.0)  # 临时提高 2°C 逼它加热，上限100
+                            wb.set_temperature(nudge_sv)
+                            nudge_t = time.time()
+                            last_pwr_zero = 0
+                    # 降温方向：PV 不够低，但压缩机停了
+                    elif need_cool and pv > target + args.bath_tolerance and pwr is not None and pwr == 0:
+                        if last_pwr_zero == 0:
+                            last_pwr_zero = time.time()
+                        elif time.time() - last_pwr_zero > 15 and gap > 0.15:
+                            nudge_sv = max(-30, target - 2.0)  # 临时降低 2°C 逼它制冷
+                            wb.set_temperature(nudge_sv)
+                            nudge_t = time.time()
+                            last_pwr_zero = 0
+                    else:
+                        last_pwr_zero = 0  # 输出有了，重置计时
+
+                # 推模式退出条件：PV 进入容差范围
+                if nudge_sv is not None:
+                    if abs(pv - target) <= args.bath_tolerance:
+                        wb.set_temperature(target)  # 恢复正常目标
+                        nudge_sv = None
+                    elif time.time() - nudge_t > 120:
+                        # 推了 2 分钟还没到，放弃推（也许是别的问题）
+                        wb.set_temperature(target)
+                        nudge_sv = None
+
                 os.system('cls' if os.name == 'nt' else 'clear')
                 print("=" * 65)
                 resume_tag = ' [续跑]' if resumed_from else ''
@@ -398,7 +436,8 @@ def main():
                       f"{args.start}->{args.end}°C | 步进 {args.step}°C")
                 print("=" * 65)
                 cooling_hint = ' [降温中]' if need_cool else ''
-                print(f"  [{disp_i}/{total}] 等待水浴稳定到 {target}°C ...{cooling_hint}")
+                nudge_hint = f' [推→{nudge_sv}°C]' if nudge_sv is not None else ''
+                print(f"  [{disp_i}/{total}] 等待水浴稳定到 {target}°C ...{cooling_hint}{nudge_hint}")
                 print(f"  进度: {progress_bar(done, total)} {done*100//total}% | "
                       f"耗时 {elapsed_t/60:.0f}min | 剩余 {eta/60:.0f}min")
                 print("-" * 65)
@@ -410,8 +449,10 @@ def main():
                     else:
                         reached = pv >= target - args.bath_tolerance
                     bs = '[OK]' if (reached and d <= args.bath_tolerance) else '...'
-                    print(f"  水浴: PV={pv:.4f}°C  目标={target}°C  "
-                          f"d={d:.4f}°C  {bs}  加热={pwr}%")
+                    sv_display = wb.get_setpoint()
+                    sv_str = f" SV={sv_display}°C" if sv_display is not None else ""
+                    print(f"  水浴: PV={pv:.4f}°C  目标={target}°C{sv_str}  "
+                          f"d={d:.4f}°C  {bs}  输出={pwr}%")
                 adc_v = ts.get('adc')
                 n_frames = ts.get('frames', 0)
                 conn = '[LINK]' if n_frames > 0 else '[WAIT]'
@@ -420,22 +461,95 @@ def main():
                 if records:
                     last = records[-1]
                     print(f"  已记录: {done} 点 | 上一点: {last['target']}°C ADC={last['adc_mean']:.1f}")
+                if nudge_sv is not None:
+                    print(f"  ⚡ 推模式: 临时设定 {nudge_sv}°C 逼水浴动作, {time.time()-nudge_t:.0f}s")
                 print("=" * 65)
 
-                # 方向性稳定判定 + 二次确认
-                if pv is not None and reached and abs(pv - target) <= args.bath_tolerance and time.time() - t1 > 10:
-                    time.sleep(2)
-                    pv2 = wb.get_temperature()
-                    if pv2 is not None:
-                        if need_cool:
-                            ok = pv2 <= target + args.bath_tolerance and abs(pv2 - target) <= args.bath_tolerance
-                        else:
-                            ok = pv2 >= target - args.bath_tolerance and abs(pv2 - target) <= args.bath_tolerance
-                        if ok:
-                            bath_ok = True
-                            break
+                # 方向性稳定判定 + 二次确认 (加变化率检查 + 触底判定)
+                if pv is not None and time.time() - t1 > 10:
+                    # 触底判定：长时间不动 + 离目标很近 → 水浴到极限了，接受
+                    plateau = (time.time() - t1 > 600  # 等了 10 分钟以上
+                               and abs(pv - target) <= 0.3  # 差 0.3°C 以内
+                               and reached)  # 方向对
+                    normal_ok = (reached and abs(pv - target) <= args.bath_tolerance)
+
+                    if plateau or normal_ok:
+                        # 如果还在推模式，先退出
+                        if nudge_sv is not None:
+                            wb.set_temperature(target)
+                            nudge_sv = None
+                        pv_before = pv
+                        time.sleep(2)
+                        pv2 = wb.get_temperature()
+                        if pv2 is not None:
+                            drift = abs(pv2 - pv_before) if pv_before is not None else 999
+                            # 触底放宽 drift 到 0.1°C，正常用 0.05°C
+                            drift_limit = 0.1 if plateau else 0.05
+                            if need_cool:
+                                ok = (pv2 <= target + args.bath_tolerance
+                                      and abs(pv2 - target) <= max(args.bath_tolerance, 0.3 if plateau else 0)
+                                      and drift < drift_limit)
+                            else:
+                                ok = (pv2 >= target - args.bath_tolerance
+                                      and abs(pv2 - target) <= max(args.bath_tolerance, 0.3 if plateau else 0)
+                                      and drift < drift_limit)
+                            if ok:
+                                bath_ok = True
+                                if plateau:
+                                    print(f"  ⚡ 触底判定: 水浴已达极限, "
+                                          f"PV={pv2:.3f}°C, 距目标 {abs(pv2-target):.3f}°C, 接受")
+                                break
                 time.sleep(0.4)
             if not bath_ok:
+                # 超时未稳定：重试当前温度，不跳过
+                retry_count = 0
+                while not bath_ok and retry_count < 10:
+                    retry_count += 1
+                    print(f"\n  ⚠ {target}°C 超时未稳定 (第{retry_count}次重试)...")
+                    wb.set_temperature(target)
+                    time.sleep(2)
+                    t1 = time.time()
+                    while time.time() - t1 < 900:
+                        pv = wb.get_temperature()
+                        if pv is None:
+                            time.sleep(0.8)
+                            continue
+                        if pv_first is None:
+                            pv_first = pv
+                            need_cool = pv > target + args.bath_tolerance
+                        if need_cool:
+                            reached = pv <= target + args.bath_tolerance
+                        else:
+                            reached = pv >= target - args.bath_tolerance
+                        # 触底判定 + 正常判定（与主循环一致）
+                        plateau_retry = (time.time() - t1 > 600
+                                         and abs(pv - target) <= 0.3
+                                         and reached)
+                        normal_retry = (reached and abs(pv - target) <= args.bath_tolerance)
+
+                        if (plateau_retry or normal_retry) and time.time() - t1 > 10:
+                            time.sleep(2)
+                            pv2 = wb.get_temperature()
+                            if pv2 is not None:
+                                drift = abs(pv2 - pv)
+                                drift_limit = 0.1 if plateau_retry else 0.05
+                                if need_cool:
+                                    ok = (pv2 <= target + args.bath_tolerance
+                                          and abs(pv2 - target) <= max(args.bath_tolerance, 0.3 if plateau_retry else 0)
+                                          and drift < drift_limit)
+                                else:
+                                    ok = (pv2 >= target - args.bath_tolerance
+                                          and abs(pv2 - target) <= max(args.bath_tolerance, 0.3 if plateau_retry else 0)
+                                          and drift < drift_limit)
+                                if ok:
+                                    bath_ok = True
+                                    if plateau_retry:
+                                        print(f"  ⚡ 触底判定(重试): PV={pv2:.3f}°C, "
+                                              f"距目标 {abs(pv2-target):.3f}°C, 接受")
+                                    break
+                        time.sleep(0.4)
+                if not bath_ok:
+                    print(f"\n  ❌ {target}°C 多次重试仍失败，跳过。检查水浴是否正常工作！")
                 continue
 
             # ---- 等 TTAG ADC 稳定 ----
@@ -520,15 +634,16 @@ def main():
                     # 超时：用已有数据兜底
                     _, mean, rng, n, _ = adc_det.check()
                     ts2 = ttag.get_state()
-                    adc_mean = mean if mean else (ts2.get('adc') or 0)
-                    adc_range = rng if rng else 0
+                    adc_mean = mean if mean is not None else ts2.get('adc') if ts2.get('adc') is not None else 0
+                    adc_range = rng if rng is not None else 0
                     adc_n = n
                 adc_elapsed = time.time() - t2
             else:
                 adc_mean = adc_range = adc_n = adc_elapsed = 0
 
             # ---- 记录 ----
-            pv_now = wb.get_temperature() or target
+            pv = wb.get_temperature()
+            pv_now = pv if pv is not None else target
             ts_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             records.append({
                 'target': target, 'actual': pv_now,

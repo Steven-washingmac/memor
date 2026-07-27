@@ -8,7 +8,7 @@ sys.path.insert(0, '.')
 # ---- 固定参数 ----
 DEVICE = 195082
 BATH_TOLERANCE = 0.1
-ADC_SAMPLES = 10
+ADC_SAMPLES = 5
 ADC_THRESHOLD = 5
 WATER_BATH_PORT = 'COM3'
 TTAG_PORT = 20226
@@ -19,7 +19,8 @@ print('  TTAG 标定启动器')
 print('=' * 50)
 
 # ---- 1. 检测已有文件 ----
-existing = glob.glob('calibration_data.xlsx') + glob.glob('cal_*.xlsx') + glob.glob('cal_*.csv')
+existing = (glob.glob('calibration_data.xlsx') + glob.glob('cal_*.xlsx') + glob.glob('cal_*.csv')
+            + glob.glob('ADCTdata/*/cal_*.xlsx') + glob.glob('ADCTdata/*/cal_*.csv'))
 resume_file = None
 completed_info = None
 
@@ -74,10 +75,10 @@ if resume and completed_info:
 
     while True:
         try:
-            end_str = input(f'结束温度 (默认 50.0): ').strip()
-            end = float(end_str) if end_str else 50.0
-            if end <= start:
-                print(f'  结束温度需大于起始温度 {start} C')
+            end_str = input(f'结束温度 (默认 9.0): ').strip()
+            end = float(end_str) if end_str else 9.0
+            if end == start:
+                print(f'  结束温度不能等于起始温度 {start} C')
                 continue
             break
         except ValueError:
@@ -101,10 +102,10 @@ else:
 
     while True:
         try:
-            e = input(f'结束温度 (默认 50.0): ').strip()
-            end = float(e) if e else 50.0
-            if end <= start:
-                print(f'  结束温度需大于起始温度 {start} C')
+            e = input(f'结束温度 (默认 9.0): ').strip()
+            end = float(e) if e else 9.0
+            if end == start:
+                print(f'  结束温度不能等于起始温度 {start} C')
                 continue
             break
         except ValueError:
@@ -146,22 +147,33 @@ if confirm and confirm != 'y':
     sys.exit(0)
 
 # ---- 5. 启动 ----
+import subprocess
+
 if resume and completed_info:
-    args = (f'--resume "{completed_info["file"]}"'
-            f' --end {end}'
-            f' --step {step}')
+    cmd_args = ['--resume', completed_info['file'],
+                '--end', str(end),
+                '--step', str(step)]
 else:
-    args = (f'--device {device_id}'
-            f' --start {start}'
-            f' --end {end}'
-            f' --step {step}')
+    cmd_args = ['--device', str(device_id),
+                '--start', str(start),
+                '--end', str(end),
+                '--step', str(step)]
 
-args += (f' --bath-tolerance {BATH_TOLERANCE}'
-         f' --stability-samples {ADC_SAMPLES}'
-         f' --stability-threshold {ADC_THRESHOLD}'
-         f' --water-bath-port {WATER_BATH_PORT}'
-         f' --ttag-port {TTAG_PORT}')
+cmd_args += ['--bath-tolerance', str(BATH_TOLERANCE),
+             '--stability-samples', str(ADC_SAMPLES),
+             '--stability-threshold', str(ADC_THRESHOLD),
+             '--water-bath-port', WATER_BATH_PORT,
+             '--ttag-port', str(TTAG_PORT)]
 
-cmd = f'python -u ttag_calibration.py {args}'
-print(f'\n启动: {cmd}\n')
-os.system(cmd)
+print(f'\n启动: python -u ttag_calibration.py {" ".join(cmd_args)}\n')
+
+try:
+    result = subprocess.run([sys.executable, '-u', 'ttag_calibration.py'] + cmd_args,
+                           check=False)
+    print(f'\n程序退出，返回码: {result.returncode}')
+except FileNotFoundError:
+    print(f'错误: 找不到 Python ({sys.executable})')
+    sys.exit(1)
+except KeyboardInterrupt:
+    print('\n已中断')
+    sys.exit(0)

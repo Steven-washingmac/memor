@@ -114,3 +114,11 @@ htmlcov/
 # ===== TTag 监控器 =====
 # 运行时导出的 CSV
 *.csv
+
+# 标定数据目录（测量数据不入库）
+ADCTdata/
+
+# 拟合生成的图表
+*.png
+*.jpg
+*.xlsx

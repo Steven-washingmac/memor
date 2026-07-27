@@ -53,12 +53,24 @@ class WaterBath:
         self.ser.write(req)
         time.sleep(0.15)
         resp = self.ser.read(64)
-        if resp and len(resp) >= 5 and resp[1] == 0x03:
-            values = []
-            for i in range(0, resp[2], 2):
-                values.append((resp[3+i] << 8) | resp[4+i])
-            return values[0] if count == 1 else values
-        return None
+        if not resp or len(resp) < 5 or resp[1] != 0x03:
+            return None
+        data_len = resp[2]
+        expected = 5 + data_len  # addr+func+len + data + crc(2)
+        if len(resp) < expected:
+            return None
+        # CRC 校验
+        crc_received = resp[expected-2:expected]
+        crc_calc = crc16(resp[:expected-2])
+        if crc_received != crc_calc:
+            return None
+        # 限制 data_len 防止异常值导致索引错误
+        if data_len > 32 or data_len < 2:
+            return None
+        values = []
+        for i in range(0, data_len, 2):
+            values.append((resp[3+i] << 8) | resp[4+i])
+        return values[0] if count == 1 else values
 
     def write_reg(self, reg, value):
         req = bytes([self.addr, 0x06, (reg >> 8) & 0xFF, reg & 0xFF,
@@ -71,14 +83,23 @@ class WaterBath:
         return resp and resp[1] == 0x06
 
     def get_temperature(self):
-        """读取当前实际温度 PV (°C)，精度 0.01°C"""
+        """读取当前实际温度 PV (°C)，精度 0.01°C，有符号"""
         v = self.read_reg(REG_PV)
-        return v / 100.0 if v is not None else None
+        if v is not None:
+            # 有符号 16-bit: > 32767 表示负数
+            if v > 32767:
+                v = v - 65536
+            return v / 100.0
+        return None
 
     def get_setpoint(self):
-        """读取设定温度 SV (°C)"""
+        """读取设定温度 SV (°C)，有符号"""
         v = self.read_reg(REG_SV)
-        return v / 10.0 if v is not None else None
+        if v is not None:
+            if v > 32767:
+                v = v - 65536
+            return v / 10.0
+        return None
 
     def get_status(self):
         """读取加热输出"""
@@ -88,7 +109,7 @@ class WaterBath:
     def set_temperature(self, temp_c):
         """设置目标温度 (°C)，精度 0.1°C"""
         value = int(temp_c * 10)
-        value = max(0, min(value, 1000))
+        value = max(-300, min(value, 1000))  # -30.0 ~ 100.0°C
         return self.write_reg(REG_SV, value)
 
     def close(self):

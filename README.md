@@ -26,14 +26,17 @@ pip install -r requirements.txt
 memor/
 ├── ttag_monitor.py         # 基站监听 — 实时显示标签数据
 ├── ttag_calibration.py     # 自动标定 — 水浴控制 + ADC采集 + Excel输出
+├── ttag_verify.py          # 复测验证 — 拟合函数精度验证，交互式逐点测试
 ├── run_cal.py              # 一键启动器 — 自动检测续跑，预置稳定参数
 ├── water_bath_control.py   # 水浴控制 — Modbus RTU 读写（独立工具）
 ├── ttag_fitting.py         # 自动拟合 — 标定完成后自动执行，6/7 阶多项式
+├── ttag_cal_app.py         # GUI 标定程序 — tkinter 桌面应用，可打包为 .exe
 ├── ttag_web.py             # Web 仪表盘 — 浏览器实时监控
 ├── ttag_fitting.m          # MATLAB 拟合（备用手动方案）
 ├── ntc_fitting.m           # MATLAB NTC 查表拟合
 ├── ntc_fit_6.m             # MATLAB NTC 6 阶拟合
 ├── ntcb.csv                # NTC 电阻-温度查表数据
+├── build_exe.bat           # PyInstaller 打包脚本 → TTAG_Cal.exe
 ├── requirements.txt        # Python 依赖清单
 └── README.md
 ```
@@ -89,6 +92,51 @@ python ttag_calibration.py --device 230030 --start 5 --end 50 --step 0.2
 | `cal_230030_0722_1530_coeffs.txt` | 多项式系数存档 |
 
 文件名格式：`cal_{设备ID}_{月日}_{时分}.xlsx`，每次运行生成新文件，不会覆盖历史数据。
+
+### 第四步：复测验证（`ttag_verify.py`）
+
+标定完成、拟合函数确定后，用此程序验证拟合精度——将 ADC 代入函数算出温度，与水浴实际温度对比，误差须在 ±1°C 以内。
+
+```bash
+# 交互式运行（推荐）
+python ttag_verify.py
+
+# 带参数运行
+python ttag_verify.py --device 195082
+python ttag_verify.py --device 195082 --connect 192.168.3.188:20226
+python ttag_verify.py --bath-port COM4
+```
+
+**运行流程：**
+
+```
+1. 输入复测温度点（交互式）
+   示例: -18, -10, 0, 10, 25, 50, 80
+   或输入 low / mid / high 使用预设分组
+
+2. 逐点自动执行:
+   ① 设定水浴 SV=目标温度
+   ② 等待水浴稳定（方向判定 + 推一把 + 触底判定 + drift 检查）
+   ③ 等待 ADC 稳定（≥5 样本，峰峰值 ≤5）
+   ④ ADC → 代入 6 阶多项式 → T_calc
+   ⑤ 实时显示 T_calc vs T_actual，误差，是否 ≤ ±1°C
+   ⑥ 立即写入 Excel（每点都存，不怕崩溃）
+
+3. 汇总 + 询问是否继续测试其他温度点
+```
+
+**输出：** 所有复测结果追加到同一个 `ADCTdata/verify_{设备ID}.xlsx`，绿色=通过，红色=超标。
+
+**拟合函数：** 内置在 `ttag_verify.py` 中（`adc_to_temperature` 函数），6 阶多项式，系数来自标定拟合结果。更换设备时需更新 `COEFFS` 列表。
+
+### 第五步（可选）：GUI 桌面程序（`ttag_cal_app.py`）
+
+Windows 桌面 GUI，集成所有功能——连接、参数设置、标定运行、实时曲线、数据导出。可打包为独立 .exe：
+
+```bash
+python ttag_cal_app.py          # 直接运行
+build_exe.bat                   # 打包为 TTAG_Cal.exe
+```
 
 ---
 
