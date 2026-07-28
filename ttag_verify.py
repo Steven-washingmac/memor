@@ -67,6 +67,7 @@ def parse_frame(data):
                 tags.append({
                     'tag_id': tag.tag_id, 'adc': tag.adc,
                     'rssi': tag.rssi, 'tag_type': tag.tag_type,
+                    'temperature': tag.temperature,  # 新协议直接用温度
                 })
     except Exception:
         pass
@@ -81,10 +82,12 @@ class TtagReceiver:
         self.connect_to = connect_to
         self.latest_adc = None
         self.latest_rssi = None
+        self.latest_temperature = None  # 新协议温度值
         self.last_seen = None
         self.hit_count = 0
         self.frame_count = 0
         self.running = False
+        self.new_protocol = None  # None=未知, True=新协议, False=旧协议
         self._lock = threading.Lock()
 
     def start(self):
@@ -100,9 +103,11 @@ class TtagReceiver:
             return {
                 'adc': self.latest_adc,
                 'rssi': self.latest_rssi,
+                'temperature': self.latest_temperature,
                 'last_seen': self.last_seen,
                 'hits': self.hit_count,
                 'frames': self.frame_count,
+                'new_protocol': self.new_protocol,
             }
 
     def _run(self):
@@ -187,10 +192,17 @@ class TtagReceiver:
             buffer = buffer[frame_len:]
             self.frame_count += 1
             for t in parse_frame(frame_data):
-                if t['tag_id'] == self.device_id and t['adc'] != 0xFFFF:
+                if t['tag_id'] == self.device_id:
+                    temp_val = t.get('temperature')
+                    # 检测协议类型
+                    if self.new_protocol is None and temp_val is not None:
+                        self.new_protocol = True  # 新协议：标签直接给温度
+                    if t['adc'] == 0xFFFF:
+                        continue  # 低电量，跳过
                     with self._lock:
                         self.latest_adc = t['adc']
                         self.latest_rssi = t['rssi']
+                        self.latest_temperature = temp_val
                         self.last_seen = time.time()
                         self.hit_count += 1
 
@@ -570,10 +582,15 @@ def run_verify(device_id, points, connect_to=None, port=20226,
                 bs = '[OK]' if (reached and d <= bath_tolerance) else '...'
                 print(f"  水浴: PV={pv:.4f}°C  d={d:.4f}°C  {bs}  输出={pwr}%")
             adc_cur = ts.get('adc')
+            tag_t = ts.get('temperature')
             n_frames = ts.get('frames', 0)
             conn = '[LINK]' if n_frames > 0 else '[WAIT]'
-            print(f"  TTAG: ADC={adc_cur}  RSSI={ts.get('rssi')}  "
-                  f"命中={ts.get('hits', 0)}  {conn}")
+            if ts.get('new_protocol') and tag_t is not None:
+                print(f"  TTAG: T={tag_t:.2f}°C  RSSI={ts.get('rssi')}  "
+                      f"命中={ts.get('hits', 0)}  {conn}")
+            else:
+                print(f"  TTAG: ADC={adc_cur}  RSSI={ts.get('rssi')}  "
+                      f"命中={ts.get('hits', 0)}  {conn}")
             if results:
                 last_r = results[-1]
                 print(f"  已复测: {len(results)} 点 | "
@@ -644,12 +661,16 @@ def run_verify(device_id, points, connect_to=None, port=20226,
 
             stable, mean, rng, n, span = adc_det.check()
 
+            tag_temp = ts.get('temperature')  # 新协议直接温度
+            is_new_proto = ts.get('new_protocol', False)
+
             clear_screen()
             print("=" * 64)
             print(f"  TTAG 复测程序 | 设备 {device_id} | "
                   f"第 {disp_i}/{total_points} 点")
             print("=" * 64)
-            print(f"  采集 ADC 数据 ... 目标={target}°C")
+            proto_label = '温度' if is_new_proto else 'ADC'
+            print(f"  采集{proto_label}数据 ... 目标={target}°C")
             print(f"  进度: {progress_bar(done, total_points)} "
                   f"{done * 100 // total_points}%")
             print("-" * 64)
@@ -659,9 +680,14 @@ def run_verify(device_id, points, connect_to=None, port=20226,
             if adc_v is not None:
                 st_str = '● STABLE' if stable else '○ 采集中'
                 fresh = '(旧)' if n == 0 else f'n={n}'
-                t_now = adc_to_temperature(adc_v)
-                t_now_str = f"→ {t_now:.2f}°C" if t_now is not None else ""
-                print(f"  TTAG: ADC={adc_v} {fresh}  {st_str}  "
+                if is_new_proto and tag_temp is not None:
+                    t_now_str = f"T_tag={tag_temp:.2f}°C"
+                    val_str = f"Temp_raw={adc_v}"
+                else:
+                    t_now = adc_to_temperature(adc_v)
+                    t_now_str = f"→ {t_now:.2f}°C" if t_now is not None else ""
+                    val_str = f"ADC={adc_v}"
+                print(f"  TTAG: {val_str} {fresh}  {st_str}  "
                       f"μ={mean or 0:.1f}  Δ={rng}  {t_now_str}  [{adc_el:.0f}s]")
                 if n == 0 and adc_el > 15:
                     n_frames = ts.get('frames', 0)
@@ -696,7 +722,25 @@ def run_verify(device_id, points, connect_to=None, port=20226,
         # ---- Step 4: 计算温度 & 对比 ----
         pv_final = wb.get_temperature()
         pv_now = pv_final if pv_final is not None else target
-        t_calculated = adc_to_temperature(adc_mean) if adc_mean is not None else None
+        is_new_proto = ttag.get_state().get('new_protocol', False)
+
+        if is_new_proto:
+            # 新协议：标签直接给温度，adc_mean 实际存的是温度原始值 (×10)
+            # 直接用标签最新温度值
+            tag_temp = ttag.get_state().get('temperature')
+            if tag_temp is not None:
+                t_calculated = tag_temp
+            elif adc_mean is not None:
+                # 备用：从原始值换算（有符号, /10）
+                raw = adc_mean
+                if raw > 32767:
+                    raw = raw - 65536
+                t_calculated = raw / 10.0
+            else:
+                t_calculated = None
+        else:
+            # 旧协议：ADC → 多项式 → 温度
+            t_calculated = adc_to_temperature(adc_mean) if adc_mean is not None else None
 
         if t_calculated is not None and pv_now is not None:
             error = t_calculated - pv_now
@@ -706,11 +750,12 @@ def run_verify(device_id, points, connect_to=None, port=20226,
         passed = abs(error) <= 1.0 if error is not None else False
         status_icon = '✅' if passed else '❌'
 
+        note = '新协议(直接温度)' if is_new_proto else ''
         results.append({
             'target': target, 'label': label,
             'pv': pv_now, 'adc_mean': adc_mean, 'adc_range': adc_range,
             'adc_n': adc_n, 't_calc': t_calculated, 'error': error,
-            'passed': passed, 'note': '',
+            'passed': passed, 'note': note,
         })
 
         # 立即写 Excel（每点都存，不会因后续崩溃丢失数据）
@@ -726,8 +771,11 @@ def run_verify(device_id, points, connect_to=None, port=20226,
         print(f"  📊 第 {disp_i} 点结果:")
         print(f"     目标温度:  {target}°C")
         print(f"     水浴实际:  {pv_now:.2f}°C")
-        print(f"     ADC 均值:  {adc_mean:.1f}  (Δ={adc_range}, n={adc_n})")
-        print(f"     计算温度:  {t_calculated:.2f}°C" if t_calculated is not None else f"     计算温度:  N/A")
+        if is_new_proto:
+            print(f"     标签温度:  {t_calculated:.2f}°C" if t_calculated is not None else f"     标签温度:  N/A")
+        else:
+            print(f"     ADC 均值:  {adc_mean:.1f}  (Δ={adc_range}, n={adc_n})")
+            print(f"     计算温度:  {t_calculated:.2f}°C" if t_calculated is not None else f"     计算温度:  N/A")
         print(f"     误  差:    {error:+.2f}°C  {status_icon}" if error is not None else f"     误  差:    N/A")
         print(f"  {'─'*50}")
 
@@ -756,19 +804,25 @@ def run_verify(device_id, points, connect_to=None, port=20226,
     print("=" * 64)
     print("  TTAG 复测程序 — 汇总")
     print(f"  设备: {device_id} | "
-          f"总耗时: {int((time.time() - t0_total) / 60)}min")
+          f"总耗时: {int((time.time() - t0_total) / 60)}min"
+          f"{' | 新协议(直接温度)' if ttag.get_state().get('new_protocol') else ' | 旧协议(ADC→T)'}")
     print("=" * 64)
-    print(f"  {'#':<4} {'目标°C':<9} {'水浴°C':<9} {'ADC':<7} "
+    val_col = '标签°C' if ttag.get_state().get('new_protocol') else 'ADC'
+    print(f"  {'#':<4} {'目标°C':<9} {'水浴°C':<9} {val_col:<9} "
           f"{'计算°C':<9} {'误差°C':<9} {'±1°C?':<8}")
     print(f"  {'-'*56}")
 
     pass_count = 0
     fail_count = 0
+    is_new = ttag.get_state().get('new_protocol', False)
     for j, r in enumerate(results, 1):
         pv_s = f"{r['pv']:.2f}" if r['pv'] is not None else "?"
         tc_s = f"{r['t_calc']:.2f}" if r['t_calc'] is not None else "?"
         err_s = f"{r['error']:+.2f}" if r['error'] is not None else "?"
-        adc_s = f"{r['adc_mean']:.1f}" if r['adc_mean'] is not None else "?"
+        if is_new:
+            adc_s = f"{tc_s}"
+        else:
+            adc_s = f"{r['adc_mean']:.1f}" if r['adc_mean'] is not None else "?"
         flag = '✅ 通过' if r['passed'] else '❌ 超标'
         if r['passed']:
             pass_count += 1

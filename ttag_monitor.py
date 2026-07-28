@@ -83,13 +83,15 @@ class TRGFrame:
 
 def parse_frame(data: bytes, debug: bool = False) -> TRGFrame:
     """
-    解析一帧 TRG 协议数据
+    解析一帧 TRG 协议数据，自动识别新旧协议
 
-    帧格式:
+    旧协议 (T100-230 系列, 9B标签块):
        55 AA | 长度 | 基站ID | 功能码 | SN | 标签数 | 标签块×N | 校验
-       2B    | 2B   | 2B     | 1B     | 1B | 1B     | (1+1+3+2+2)×N | 1B
+       标签块: 1B(RSSI) + 1B(类型) + 3B(ID LE) + 2B(ADC LE) + 2B(保留)
 
-    标签块: 1B(RSSI) + 1B(类型) + 3B(ID 大端) + 2B(ADC 小端) + 2B(保留)
+    新协议 (T100-316 系列, 8B标签块, 帧级RSSI):
+       55 AA | 长度 | 基站ID | 功能码 | SN | 标签数 | RSSI | 标签块×N | 校验
+       标签块: 1B(类型) + 3B(ID LE) + 2B(温度 LE, ÷10=°C, 0xFFFF=低电量) + 2B(保留)
     """
     frame = TRGFrame()
     frame.raw = data
@@ -123,57 +125,104 @@ def parse_frame(data: bytes, debug: bool = False) -> TRGFrame:
         frame.sn        = data[pos]; pos += 1
         frame.tag_count = data[pos]; pos += 1
 
-        # 预期标签块总字节数: (1+1+3+2+2) * tag_count = 9 * tag_count
-        expected_tag_bytes = 9 * frame.tag_count
+        # ---- 协议检测 ----
+        # 旧协议 payload = 5 + 9*N, 新协议 payload = 6 + 8*N
+        is_new_protocol = False
+        tag_bytes_per_tag = 9  # 旧协议
+        frame_rssi = 0
+
+        # 检查是否匹配新协议: 帧级 RSSI
+        if frame.tag_count > 0:
+            remaining = frame.data_len - 5  # 减去 stationID+func+sn+count
+            if remaining == 1 + 8 * frame.tag_count:
+                is_new_protocol = True
+                tag_bytes_per_tag = 8
+            elif remaining == 9 * frame.tag_count:
+                is_new_protocol = False
+                tag_bytes_per_tag = 9
 
         if debug:
-            tag_start = pos
+            proto = '新协议 T100-316' if is_new_protocol else '旧协议 T100-230'
             print(f"  [DEBUG] 帧hex: {data.hex(' ')}")
             print(f"  [DEBUG] 基站ID={frame.station_id} func={frame.func_code:02X} "
                   f"SN={frame.sn} tag_count={frame.tag_count} "
-                  f"data_len={frame.data_len}")
-            print(f"  [DEBUG] 标签块起始偏移={tag_start}, 预期{expected_tag_bytes}B")
+                  f"data_len={frame.data_len} | {proto}")
+            print(f"  [DEBUG] 标签块起始偏移={pos}")
+
+        # 新协议：读取帧级 RSSI
+        if is_new_protocol:
+            frame_rssi = data[pos]; pos += 1
 
         for i in range(frame.tag_count):
-            if pos + 9 > len(data):
+            if pos + tag_bytes_per_tag > len(data):
                 if debug:
-                    print(f"  [DEBUG] 标签#{i}: 剩余{len(data)-pos}B不足9B, 终止")
+                    print(f"  [DEBUG] 标签#{i}: 剩余{len(data)-pos}B不足{tag_bytes_per_tag}B, 终止")
                 break
 
             tag_start_pos = pos
-
             tag = TagData()
 
-            tag.rssi     = data[pos]; pos += 1
-            tag.tag_type = data[pos]; pos += 1
+            if is_new_protocol:
+                # 新协议 T100-316: Type(1) + ID(3) + Temp(2, LE, ÷10°C) + Reserved(2)
+                tag.rssi     = frame_rssi  # 帧级 RSSI
+                tag.tag_type = data[pos]; pos += 1
 
-            # ID: 3 字节小端序 (低字节在前)
-            id_b0 = data[pos]; id_b1 = data[pos + 1]; id_b2 = data[pos + 2]
-            tag.tag_id = id_b0 | (id_b1 << 8) | (id_b2 << 16)
-            pos += 3
+                id_b0 = data[pos]; id_b1 = data[pos + 1]; id_b2 = data[pos + 2]
+                tag.tag_id = id_b0 | (id_b1 << 8) | (id_b2 << 16)
+                pos += 3
 
-            # ADC: 2 字节小端序
-            adc_raw = data[pos:pos+2]
-            tag.adc = struct.unpack_from('<H', data, pos)[0]
-            pos += 2
+                temp_raw = struct.unpack_from('<H', data, pos)[0]
+                tag.adc = temp_raw  # 复用 adc 字段存原始温度值
+                pos += 2
 
-            # 保留
-            tag.reserved = struct.unpack_from('<H', data, pos)[0]
-            pos += 2
+                tag.reserved = struct.unpack_from('<H', data, pos)[0]
+                pos += 2
 
-            if debug:
-                tag_bytes = data[tag_start_pos:pos]
-                print(f"  [DEBUG]   #{i} raw={tag_bytes.hex(' ')} "
-                      f"→ RSSI={tag.rssi} type=0x{tag.tag_type:02X} "
-                      f"ID={tag.tag_id} (0x{tag.tag_id:06X}) "
-                      f"ADC={tag.adc} (raw={adc_raw.hex(' ')}) "
-                      f"reserved=0x{tag.reserved:04X}")
+                if temp_raw == LOW_BATTERY_ADC:
+                    tag.low_battery = True
+                    tag.temperature = None
+                else:
+                    # 有符号 16-bit 温度
+                    if temp_raw > 32767:
+                        temp_raw = temp_raw - 65536
+                    tag.temperature = temp_raw / 10.0
 
-            if tag.adc == LOW_BATTERY_ADC:
-                tag.low_battery = True
-                tag.temperature = None
+                if debug:
+                    tag_bytes = data[tag_start_pos:pos]
+                    print(f"  [DEBUG]   #{i} raw={tag_bytes.hex(' ')} "
+                          f"→ RSSI={frame_rssi}(帧) type=0x{tag.tag_type:02X} "
+                          f"ID={tag.tag_id} (0x{tag.tag_id:06X}) "
+                          f"Temp_raw={temp_raw} T={tag.temperature}°C "
+                          f"reserved=0x{tag.reserved:04X}")
             else:
-                tag.temperature = adc_to_temperature(tag.adc)
+                # 旧协议 T100-230: RSSI(1) + Type(1) + ID(3, LE) + ADC(2, LE) + Reserved(2)
+                tag.rssi     = data[pos]; pos += 1
+                tag.tag_type = data[pos]; pos += 1
+
+                id_b0 = data[pos]; id_b1 = data[pos + 1]; id_b2 = data[pos + 2]
+                tag.tag_id = id_b0 | (id_b1 << 8) | (id_b2 << 16)
+                pos += 3
+
+                adc_raw = data[pos:pos+2]
+                tag.adc = struct.unpack_from('<H', data, pos)[0]
+                pos += 2
+
+                tag.reserved = struct.unpack_from('<H', data, pos)[0]
+                pos += 2
+
+                if debug:
+                    tag_bytes = data[tag_start_pos:pos]
+                    print(f"  [DEBUG]   #{i} raw={tag_bytes.hex(' ')} "
+                          f"→ RSSI={tag.rssi} type=0x{tag.tag_type:02X} "
+                          f"ID={tag.tag_id} (0x{tag.tag_id:06X}) "
+                          f"ADC={tag.adc} (raw={adc_raw.hex(' ')}) "
+                          f"reserved=0x{tag.reserved:04X}")
+
+                if tag.adc == LOW_BATTERY_ADC:
+                    tag.low_battery = True
+                    tag.temperature = None
+                else:
+                    tag.temperature = adc_to_temperature(tag.adc)
 
             frame.tags.append(tag)
 

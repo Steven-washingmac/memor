@@ -75,14 +75,15 @@ def get_config(section, key, default=''):
 # 帧解析（独立实现，不依赖 ttag_monitor）
 # ============================================================
 def parse_frame(data):
-    """解析 55 AA 帧，返回 tag 列表 [{tag_id, adc, rssi, tag_type}]"""
+    """解析 55 AA 帧，返回 tag 列表 [{tag_id, adc, rssi, tag_type, temperature}]"""
     tags = []
     try:
         frame = monitor_parse_frame(data)
         if frame.valid:
             for tag in frame.tags:
                 tags.append({'tag_id': tag.tag_id, 'adc': tag.adc,
-                             'rssi': tag.rssi, 'tag_type': tag.tag_type})
+                             'rssi': tag.rssi, 'tag_type': tag.tag_type,
+                             'temperature': tag.temperature})
     except Exception:
         pass
     return tags
@@ -99,6 +100,7 @@ class TtagReceiver:
         self.connect_to = connect_to
         self.latest_adc = None
         self.latest_rssi = None
+        self.latest_temperature = None  # 新协议
         self.last_seen = None
         self.hit_count = 0
         self.frame_count = 0
@@ -205,12 +207,14 @@ class TtagReceiver:
                     with self._lock:
                         self.latest_adc = t['adc']
                         self.latest_rssi = t['rssi']
+                        self.latest_temperature = t.get('temperature')
                         self.last_seen = time.time()
                         self.hit_count += 1
 
     def get_state(self):
         with self._lock:
             return {'adc': self.latest_adc, 'rssi': self.latest_rssi,
+                    'temperature': self.latest_temperature,
                     'last_seen': self.last_seen, 'hits': self.hit_count,
                     'frames': self.frame_count}
 

@@ -23,7 +23,8 @@ def parse_frame(data):
         if frame.valid:
             for tag in frame.tags:
                 tags.append({'tag_id': tag.tag_id, 'adc': tag.adc,
-                            'rssi': tag.rssi, 'tag_type': tag.tag_type})
+                            'rssi': tag.rssi, 'tag_type': tag.tag_type,
+                            'temperature': tag.temperature})
     except Exception:
         pass
     return tags
