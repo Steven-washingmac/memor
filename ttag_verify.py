@@ -656,8 +656,23 @@ def run_verify(device_id, points, connect_to=None, port=20226,
         print(f"     误  差:    {error:+.2f}°C  {status_icon}" if error is not None else f"     误  差:    N/A")
         print(f"  {'─'*50}")
 
+        # 超标时暂停询问，正常则自动继续
         if disp_i < total_points:
-            input(f"\n  按 Enter 继续下一个点...")
+            if not passed:
+                # 超标：暂停让用户决定是否继续
+                print(f"\n  ⚠ 误差 {error:+.2f}°C 超出 ±1°C！")
+                try:
+                    ans = input(f"  是否继续？[Y/n]: ").strip().lower()
+                    if ans in ('n', 'no', '否'):
+                        print("  用户中止")
+                        break
+                except (EOFError, KeyboardInterrupt):
+                    print("\n  用户中止")
+                    break
+            else:
+                # 正常：短暂显示后自动继续
+                print(f"\n  ✅ 通过，{3}秒后自动继续下一个点...")
+                time.sleep(3)
 
     # ================================================================
     # 汇总
