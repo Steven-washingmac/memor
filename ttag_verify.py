@@ -316,12 +316,82 @@ def run_verify(device_id, points, connect_to=None, port=20226,
         from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
         if os.path.exists(xlsx_path):
             wb = load_workbook(xlsx_path)
-            ws = wb.active
+            if 'TTAG Verify' in wb.sheetnames:
+                ws = wb['TTAG Verify']
+            else:
+                ws = wb.active
             nr = ws.max_row + 1
         else:
             wb = Workbook()
-            ws = wb.active
-            ws.title = 'TTAG Verify'
+            # Sheet1: 拟合函数信息
+            ws_info = wb.active
+            ws_info.title = f'{device_id} 拟合函数'
+
+            info_font = Font(bold=True, size=12)
+            ws_info.merge_cells('A1:D1')
+            ws_info['A1'] = f'TTAG {device_id} 拟合函数 — 6阶多项式 T = f(ADC)'
+            ws_info['A1'].font = Font(bold=True, size=14)
+            ws_info['A1'].alignment = Alignment(horizontal='center')
+
+            ws_info.merge_cells('A2:D2')
+            ws_info['A2'] = f'标定日期: 2026-07-27 | R² = 0.999986 | 数据点: 499'
+            ws_info['A2'].alignment = Alignment(horizontal='center')
+
+            info_data = [
+                ('设备ID', str(device_id)),
+                ('拟合模型', '6阶多项式 T = f(ADC) — 原始ADC直接代入'),
+                ('ADC 范围', f'{ADC_MIN} ~ {ADC_MAX}'),
+                ('温度范围', '-20.0 ~ 80.0 °C'),
+                ('最大误差(标定集)', '0.7370 °C'),
+                ('平均误差(标定集)', '0.0778 °C'),
+            ]
+            ri = 4
+            for label, val in info_data:
+                ws_info.cell(row=ri, column=1, value=label).font = Font(bold=True)
+                ws_info.merge_cells(start_row=ri, start_column=2, end_row=ri, end_column=4)
+                ws_info.cell(row=ri, column=2, value=val)
+                ri += 1
+
+            ri += 1
+            ws_info.merge_cells(start_row=ri, start_column=1, end_row=ri, end_column=4)
+            ws_info.cell(row=ri, column=1, value='T(ADC) = a6*ADC^6 + a5*ADC^5 + a4*ADC^4 + a3*ADC^3 + a2*ADC^2 + a1*ADC + a0')
+            ws_info.cell(row=ri, column=1).font = Font(name='Consolas', size=11)
+            ws_info.cell(row=ri, column=1).alignment = Alignment(horizontal='center')
+            ri += 2
+
+            chdrs = ['系数', '数值(科学计数)', '数值(小数)']
+            hdr_fill = PatternFill(start_color='4472C4', end_color='4472C4', fill_type='solid')
+            thin = Border(left=Side(style='thin'), right=Side(style='thin'),
+                          top=Side(style='thin'), bottom=Side(style='thin'))
+            for ci, h in enumerate(chdrs, 1):
+                c = ws_info.cell(row=ri, column=ci, value=h)
+                c.font = Font(bold=True, size=11, color='FFFFFF')
+                c.fill = hdr_fill
+                c.alignment = Alignment(horizontal='center')
+                c.border = thin
+            ri += 1
+            for name, val in [('a6',-1.3711752177e-15),('a5',3.8695519214e-12),
+                              ('a4',-4.2248676338e-09),('a3',2.0330942001e-06),
+                              ('a2',-2.2635394495e-04),('a1',-2.5112569353e-01),
+                              ('a0',1.3225103863e+02)]:
+                ws_info.cell(row=ri, column=1, value=name).font = Font(name='Consolas', bold=True)
+                ws_info.cell(row=ri, column=1).alignment = Alignment(horizontal='center')
+                ws_info.cell(row=ri, column=1).border = thin
+                ws_info.cell(row=ri, column=2, value=f'{val:.10e}').font = Font(name='Consolas', size=10)
+                ws_info.cell(row=ri, column=2).alignment = Alignment(horizontal='center')
+                ws_info.cell(row=ri, column=2).border = thin
+                ws_info.cell(row=ri, column=3, value=f'{val:.10f}').font = Font(name='Consolas', size=10)
+                ws_info.cell(row=ri, column=3).alignment = Alignment(horizontal='center')
+                ws_info.cell(row=ri, column=3).border = thin
+                ri += 1
+
+            ws_info.column_dimensions['A'].width = 24
+            ws_info.column_dimensions['B'].width = 26
+            ws_info.column_dimensions['C'].width = 26
+            ws_info.column_dimensions['D'].width = 22
+
+            # Sheet2: 复测数据
+            ws = wb.create_sheet('TTAG Verify')
             ws.merge_cells('A1:J1')
             ws['A1'] = f'TTAG {device_id} 复测验证结果'
             ws['A1'].font = Font(bold=True, size=14)
@@ -331,9 +401,6 @@ def run_verify(device_id, points, connect_to=None, port=20226,
             ws['A2'].alignment = Alignment(horizontal='center')
             hdrs = ['序号', '目标(°C)', '水浴实际(°C)', 'ADC均值', 'ADC峰峰值',
                     '采样数', '计算温度(°C)', '误差(°C)', '通过(±1°C)', '测试时间']
-            hdr_fill = PatternFill(start_color='4472C4', end_color='4472C4', fill_type='solid')
-            thin = Border(left=Side(style='thin'), right=Side(style='thin'),
-                          top=Side(style='thin'), bottom=Side(style='thin'))
             for ci, h in enumerate(hdrs, 1):
                 c = ws.cell(row=4, column=ci, value=h)
                 c.font = Font(bold=True, size=11, color='FFFFFF')
@@ -391,8 +458,16 @@ def run_verify(device_id, points, connect_to=None, port=20226,
     # ================================================================
     # 逐点复测
     # ================================================================
-    # 初始化 Excel
-    xl_wb, xl_ws, xl_row = _ensure_excel()
+    # 初始化 Excel，检测文件是否被占用
+    try:
+        xl_wb, xl_ws, xl_row = _ensure_excel()
+    except Exception as e:
+        print(f"\n  ❌ 无法写入 Excel: {e}")
+        print(f"  请关闭 Excel 后重新运行此程序")
+        wb.close()
+        ttag.stop()
+        return
+    print(f"  数据文件: {xlsx_path} （测试过程中请勿打开此文件）\n")
 
     for i, (target, label) in enumerate(points):
         clear_screen()
@@ -644,7 +719,7 @@ def run_verify(device_id, points, connect_to=None, port=20226,
             _append_to_excel(xl_wb, xl_ws, xl_row, results[-1], now_str)
             xl_row += 1
         except Exception as e:
-            print(f"  ⚠ Excel 写入失败: {e}")
+            print(f"  ⚠ Excel 写入失败（文件被占用？请关闭 Excel 后重试）: {e}")
 
         # 单点结果
         print(f"\n  {'─'*50}")
