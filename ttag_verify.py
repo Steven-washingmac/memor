@@ -845,15 +845,22 @@ def run_verify(device_id, points, connect_to=None, port=20226,
 # 交互式输入温度点
 # ============================================================
 def input_points():
-    """交互式让用户输入复测温度点"""
+    """交互式让用户输入复测温度点。
+
+    支持三种格式:
+      1. 逐个列举: -18, -10, 0, 20, 50, 80
+      2. 范围+步长: -18 80 0.2  (起始 结束 步长，自动生成全部点)
+      3. 预设分组: low / mid / high
+    """
     print()
     print("=" * 64)
     print("  TTAG 复测程序 — 设定复测温度点")
     print("=" * 64)
     print()
-    print("  请输入要复测的温度点（°C），用逗号或空格分隔。")
-    print("  示例: -18, -10, 0, 10, 25, 40, 55, 70, 80")
-    print("  或者输入 'low'  'mid'  'high' 使用预设分组")
+    print("  支持三种输入格式:")
+    print("    1. 逐个列举:  -18, -10, 0, 20, 50, 80")
+    print("    2. 范围+步长:  -20 80 0.2    (起始 结束 步长)")
+    print("    3. 预设分组:  low  /  mid  /  high")
     print()
 
     while True:
@@ -868,7 +875,9 @@ def input_points():
             continue
 
         raw_lower = raw.lower()
+        parts = raw.replace(',', ' ').split()
 
+        # 预设分组
         if raw_lower == 'low':
             points = [(-18, '低温'), (-15, '低温'), (-10, '低温'),
                       (-5, '低温'), (0, '低温')]
@@ -882,28 +891,53 @@ def input_points():
                       (75, '高温'), (80, '高温')]
             break
 
-        # 手动解析
+        # 解析为数字
         try:
-            parts = raw.replace(',', ' ').split()
-            temps = []
-            for p in parts:
-                t = float(p)
-                if t < -30 or t > 100:
-                    print(f"  ⚠ {t}°C 超出水浴范围 (-30~100°C)，请修正")
-                    raise ValueError()
-                temps.append(t)
+            nums = [float(p) for p in parts]
+        except ValueError:
+            print("  格式错误，请重新输入")
+            continue
 
-            if not temps:
-                print("  未解析到有效温度点，请重新输入")
-                continue
+        if not nums:
+            print("  未解析到有效温度点，请重新输入")
+            continue
 
-            # 按温度从低到高排序（复测从低温开始）
-            temps.sort()
+        # 检查范围
+        for t in nums:
+            if t < -30 or t > 100:
+                print(f"  ⚠ {t}°C 超出水浴范围 (-30~100°C)，请修正")
+                break
+        else:
+            if len(nums) == 3:
+                # 范围模式: start end step
+                start, end, step = nums[0], nums[1], nums[2]
+                if step == 0:
+                    print("  步长不能为 0")
+                    continue
+                descending = start > end
+                step = -abs(step) if descending else abs(step)
+                temps = []
+                t = start
+                while (t >= end - abs(step) / 2) if descending else (t <= end + step / 2):
+                    temps.append(round(t, 1))
+                    t += step
+                if not temps:
+                    print("  范围无效，请检查起始/结束/步长")
+                    continue
+                # 按温度从低到高排序
+                temps.sort()
+                print(f"\n  范围模式: {start} → {end}  步长 {abs(step):.1f}°C")
+                print(f"  共生成 {len(temps)} 个温度点")
+            elif len(nums) >= 2:
+                # 逐个列举模式
+                temps = sorted(nums)
+            else:
+                # 单个温度点
+                temps = nums
+
             points = []
             for t in temps:
-                if t <= -10:
-                    label = '低温'
-                elif t <= 0:
+                if t <= 0:
                     label = '低温'
                 elif t <= 40:
                     label = '中温'
@@ -911,9 +945,6 @@ def input_points():
                     label = '高温'
                 points.append((t, label))
             break
-
-        except ValueError:
-            continue
 
     # 确认
     print()
