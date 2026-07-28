@@ -350,7 +350,7 @@ class FittingEngine:
                 'max_err': max_e, 'mean_err': mean_e,
                 'status': status, 'warning': warning,
                 'coeffs': coeffs.tolist() if hasattr(coeffs, 'tolist') else list(coeffs),
-                'predict': lambda x, c=coeffs: np.poly1d(c)(x),
+                'predict_adc': lambda adc_arr, c=coeffs: np.polyval(c, adc_arr),
             }
         except Exception as e:
             return {
@@ -394,11 +394,19 @@ class FittingEngine:
             if max(temp) - min(temp) < 20:
                 warning += ' | 温区太窄，B值拟合不准'
 
+            # predict 闭包
+            B_val = B_fit
+            def _b_predict(adc_arr, Rf=R_fixed, R25v=R25, Bv=B_val):
+                r = Rf * (1023.0 / np.clip(adc_arr, 1, 1022) - 1.0)
+                tk = 1.0 / (1.0 / 298.15 + np.log(np.clip(r, 1, 1e9) / R25v) / Bv)
+                return tk - 273.15
+
             return {
                 'model': 'NTC B-参数', 'order': None,
                 'max_err': max_e, 'mean_err': mean_e,
                 'status': status, 'warning': warning,
                 'params': {'B': round(B_fit, 1), 'R25': R25, 'R_fixed': R_fixed},
+                'predict_adc': _b_predict,
             }
         except Exception as e:
             return {
@@ -437,11 +445,19 @@ class FittingEngine:
             if C == 0 or abs(C) < 1e-12:
                 warning += ' | C 系数接近零，模型退化为对数线性'
 
+            A_v, B_v, C_v = float(A), float(B), float(C)
+            def _sh_predict(adc_arr, Rf=R_fixed, Av=A_v, Bv=B_v, Cv=C_v):
+                r = Rf * (1023.0 / np.clip(adc_arr, 1, 1022) - 1.0)
+                lnr = np.log(np.clip(r, 1, 1e9))
+                tk = 1.0 / (Av + Bv * lnr + Cv * lnr ** 3)
+                return tk - 273.15
+
             return {
                 'model': 'Steinhart-Hart', 'order': None,
                 'max_err': max_e, 'mean_err': mean_e,
                 'status': status, 'warning': warning,
-                'params': {'A': float(A), 'B': float(B), 'C': float(C)},
+                'params': {'A': A_v, 'B': B_v, 'C': C_v},
+                'predict_adc': _sh_predict,
             }
         except np.linalg.LinAlgError as e:
             return {
@@ -476,10 +492,15 @@ class FittingEngine:
             warning = ''
             if max_e > 0.3:
                 warning = f'指数模型在该温区偏差较大'
+            def _exp_predict(adc_arr, a=float(popt[0]), b=float(popt[1]), c=float(popt[2])):
+                return a * np.exp(b * adc_arr) + c
+
             return {
                 'model': '指数', 'order': None,
                 'max_err': max_e, 'mean_err': mean_e,
                 'status': status, 'warning': warning,
+                'params': {'a': float(popt[0]), 'b': float(popt[1]), 'c': float(popt[2])},
+                'predict_adc': _exp_predict,
             }
         except ImportError:
             return {
@@ -957,13 +978,12 @@ class CurveCanvas(tk.Canvas):
         if self.fit_line and self.fit_line.get('status') in ('good', 'warn'):
             try:
                 fit_adcs = np.linspace(adc_min - adc_pad, adc_max + adc_pad, 200)
-                if self.fit_line.get('order') is not None:
-                    coeffs = self.fit_line.get('coeffs')
-                    if coeffs:
-                        poly = np.poly1d(coeffs)
-                        fit_temps = poly(fit_adcs)
-                    else:
-                        fit_temps = None
+                predict_fn = self.fit_line.get('predict_adc')
+                if predict_fn is not None:
+                    fit_temps = predict_fn(fit_adcs)
+                elif self.fit_line.get('coeffs') is not None:
+                    # 兼容旧格式（多项式但没有 predict_adc）
+                    fit_temps = np.polyval(self.fit_line['coeffs'], fit_adcs)
                 else:
                     fit_temps = None
 
