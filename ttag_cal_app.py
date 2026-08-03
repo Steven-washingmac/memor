@@ -1184,6 +1184,37 @@ class MainWindow(tk.Tk):
         for did, cfg in sorted(DEVICE_TABLE.items()):
             self._add_device_row(did, cfg['protocol'], cfg.get('step', 0))
 
+        # Separator
+        ttk.Separator(parent, orient='horizontal').pack(fill='x', pady=8)
+
+        # Preset buttons
+        preset_frame = ttk.Frame(parent)
+        preset_frame.pack(fill='x', pady=(0, 4))
+        ttk.Label(preset_frame, text='Presets:', font=('', 9)).pack(side='left', padx=(0, 8))
+
+        presets = [
+            ('Low (-20~0)', [-20, -15, -10, -5, 0]),
+            ('Mid (0~40)', [0, 5, 10, 15, 20, 25, 30, 35, 40]),
+            ('High (40~90)', [40, 50, 60, 70, 80, 90]),
+            ('5 deg C Step', list(range(5, 91, 5))),
+        ]
+        for label, temps in presets:
+            btn = ttk.Button(preset_frame, text=label,
+                             command=lambda t=temps: self._preset_temps(t))
+            btn.pack(side='left', padx=2)
+
+        # Temp text area
+        ttk.Label(parent, text='Temperature points (comma/space separated):',
+                  font=('', 9)).pack(anchor='w', pady=(6, 2))
+        self.temp_text = tk.Text(parent, height=3, width=70, font=('Consolas', 10))
+        self.temp_text.pack(fill='x')
+        self.temp_text.bind('<KeyRelease>', lambda e: self._update_temp_preview())
+
+        # Preview line
+        self.temp_preview_var = tk.StringVar(value='0 points')
+        ttk.Label(parent, textvariable=self.temp_preview_var,
+                  foreground='#666', font=('', 9)).pack(anchor='w', pady=(2, 0))
+
     def _add_device_row(self, did='', proto='new_direct', step=0):
         row_frame = ttk.Frame(self.device_inner)
         row_frame.pack(fill='x', pady=2)
@@ -1221,6 +1252,37 @@ class MainWindow(tk.Tk):
                     if txt and txt.startswith('#'):
                         child.config(text=f'#{i}')
                         break
+
+    def _preset_temps(self, temps):
+        text = ', '.join(str(t) for t in temps)
+        self.temp_text.delete('1.0', 'end')
+        self.temp_text.insert('1.0', text)
+        self._update_temp_preview()
+
+    def _update_temp_preview(self):
+        raw = self.temp_text.get('1.0', 'end').strip()
+        parts = raw.replace(',', ' ').split()
+        try:
+            temps = [float(p) for p in parts]
+        except ValueError:
+            self.temp_preview_var.set('Invalid: non-numeric values found')
+            return
+        if not temps:
+            self.temp_preview_var.set('0 points')
+            return
+        temps.sort()
+        self.temp_preview_var.set(
+            f'{len(temps)} points | {temps[0]:.1f} to {temps[-1]:.1f} deg C'
+        )
+
+    def _get_temp_points(self):
+        """Parse temp_text and return sorted list of floats, or None if invalid."""
+        raw = self.temp_text.get('1.0', 'end').strip()
+        parts = raw.replace(',', ' ').split()
+        try:
+            return sorted([float(p) for p in parts])
+        except ValueError:
+            return None
 
     def _build_controls(self, parent):
         """控制按钮 + 进度/状态"""
