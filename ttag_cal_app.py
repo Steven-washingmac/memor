@@ -1496,7 +1496,7 @@ class MainWindow(tk.Tk):
                      width=12, state='readonly').pack(side='left', padx=3)
         ttk.Label(row_frame, text='间隔:').pack(side='left')
         step_cb = ttk.Combobox(row_frame, textvariable=step_var, values=['0', '5', '10'],
-                               width=6)
+                               width=6, state='readonly')
         step_cb.pack(side='left', padx=3)
         ttk.Label(row_frame, text='°C').pack(side='left')
 
@@ -1770,7 +1770,10 @@ class MainWindow(tk.Tk):
                 messagebox.showwarning('Invalid', f'Device ID must be numeric: {row["id_var"].get()}')
                 return
             proto = row['proto_var'].get()
-            step = int(row['step_var'].get())
+            try:
+                step = int(float(row['step_var'].get()))
+            except ValueError:
+                step = 0
             devices.append((did, proto, step))
         if not devices:
             messagebox.showwarning('无设备', '请至少添加一个设备')
