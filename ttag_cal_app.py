@@ -1019,7 +1019,10 @@ class CurveCanvas(tk.Canvas):
 # 主窗口
 # ============================================================
 class VerifyThread(threading.Thread):
-    """Dual-device verification thread — runs water bath + base station + collects data"""
+    """后台验证线程：水浴控温 → 多设备并行采集 → 误差对比 → Excel 输出
+    通过 Queue 向 UI 推送实时状态，支持暂停/继续/停止。
+    params 需包含: devices(设备列表), temps(温度点), bath_port, bath_tolerance,
+                   stability_samples, stability_threshold, port, connect_to"""
     def __init__(self, params, status_queue):
         super().__init__(daemon=True)
         self.params = params
@@ -1391,6 +1394,7 @@ class MainWindow(tk.Tk):
         self._build_verify_panel()
 
     def _build_verify_panel(self):
+        """构建验证模式面板：设备卡片列表 + 范围/预设/手动温度点 + 稳定参数"""
         parent = self.verify_frame
 
         # Device list header
@@ -1478,6 +1482,7 @@ class MainWindow(tk.Tk):
         ttk.Entry(param_row, textvariable=self.verify_thresh_var, width=4).pack(side='left', padx=2)
 
     def _add_device_row(self, did='', proto='new_direct', step=0):
+        """添加一个设备卡片行：设备号输入 + 协议下拉 + 测量间隔 + 删除按钮"""
         row_frame = ttk.Frame(self.device_inner)
         row_frame.pack(fill='x', pady=2)
 
@@ -1516,7 +1521,7 @@ class MainWindow(tk.Tk):
                         break
 
     def _generate_range(self):
-        """从起始/结束/步长生成温度点并填入文本框"""
+        """从 起始/结束/步长 生成温度点列表并填入文本框（支持降序范围）"""
         try:
             start = float(self.verify_start_var.get())
             end = float(self.verify_end_var.get())
@@ -1611,6 +1616,7 @@ class MainWindow(tk.Tk):
         self.status_text.pack(fill='x')
 
     def _on_mode_change(self):
+        """切换标定/验证模式：运行时锁定不可切换，切换时显隐对应面板"""
         running = (self.cal_thread and self.cal_thread.is_alive()) or \
                   (hasattr(self, 'verify_thread') and self.verify_thread and self.verify_thread.is_alive())
         if running:
@@ -1658,7 +1664,7 @@ class MainWindow(tk.Tk):
         self.export_btn.pack(fill='x', pady=(6, 0))
 
     def _build_data_table(self):
-        """Bottom panel: tabbed data table for verification results"""
+        """底部面板：标签页数据表格 + 加载历史 Excel 按钮"""
         table_label = ttk.Label(self.bottom_frame, text='数据表格', font=('', 10, 'bold'))
         table_label.pack(anchor='w', padx=4, pady=(4, 0))
 
@@ -1749,6 +1755,7 @@ class MainWindow(tk.Tk):
             self._start_cal()
 
     def _start_verify(self):
+        """解析设备列表和温度点 → 构建参数 → 启动 VerifyThread"""
         # Parse devices
         devices = []
         for row in self.device_rows:
@@ -2266,7 +2273,7 @@ class MainWindow(tk.Tk):
         self._set_status('\n'.join(lines))
 
     def _update_verify_status(self, s):
-        """Update status display for verify mode (multi-device)."""
+        """验证模式实时状态：进度条 + 水浴 + 各设备稳定性"""
         done, total = s.get('done', 0), s.get('total', 1)
         if total > 0:
             self.progress_var.set(done * 100 / total)
@@ -2291,7 +2298,7 @@ class MainWindow(tk.Tk):
         self._set_status('\n'.join(lines))
 
     def _add_table_row(self, r):
-        """Add a live result row to the per-device data table tab."""
+        """实时插入一行验证结果到对应设备的 Treeview 表格标签页"""
         did = str(r['did'])
         if not hasattr(self, '_table_trees'):
             self._table_trees = {}
@@ -2346,7 +2353,7 @@ class MainWindow(tk.Tk):
                             f'Excel: {xlsx}')
 
     def _load_excel_data(self):
-        """Load historical verify Excel file into the data table tabs."""
+        """从历史 Excel 文件加载数据到表格标签页（文件选择对话框）"""
         path = filedialog.askopenfilename(filetypes=[('Excel files', '*.xlsx')])
         if not path:
             return
