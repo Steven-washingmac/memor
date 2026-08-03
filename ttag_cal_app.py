@@ -1043,7 +1043,7 @@ class VerifyThread(threading.Thread):
 
         try:
             # Connect water bath
-            self._push('log', {'text': 'Connecting water bath...'})
+            self._push('log', {'text': '正在连接水浴...'})
             wb = WaterBath(port=params['bath_port'])
             pv = wb.get_temperature()
             self._push('log', {'text': f'Water bath OK: PV={pv:.2f}C' if pv else 'Water bath connected'})
@@ -1063,7 +1063,7 @@ class VerifyThread(threading.Thread):
                         found.add(did)
                 if len(found) >= len(device_ids):
                     break
-            self._push('log', {'text': f'Devices found: {len(found)}/{len(device_ids)}'})
+            self._push('log', {'text': f'已发现设备: {len(found)}/{len(device_ids)}'})
 
             # Excel setup
             onedrive = os.path.join(os.path.expanduser('~'), 'OneDrive', 'desktop')
@@ -1126,7 +1126,7 @@ class VerifyThread(threading.Thread):
                             'adc_n': 0, 't_calc': None, 'error': None, 'passed': False,
                             'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                         })
-                    self._push('log', {'text': f'Bath timeout at {target}C, skipping'})
+                    self._push('log', {'text': f'{target}°C 水浴超时，跳过'})
                     continue
 
                 # Collect data from active devices
@@ -1203,15 +1203,15 @@ class VerifyThread(threading.Thread):
             wb.remove(wb.active)
 
         for did, proto, _ in devices:
-            sname = f'{did} {"ADC Verify" if proto == "old_adc" else "Temp Verify"}'
+            sname = f'{did} {"ADC复测" if proto == "old_adc" else "温度复测"}'
             if sname not in wb.sheetnames:
                 ws = wb.create_sheet(sname)
                 ws.merge_cells('A1:J1')
-                ws['A1'] = f'TTAG {did} Verify Results'
+                ws['A1'] = f'TTAG {did} 复测验证结果'
                 ws['A1'].font = Font(bold=True, size=14)
                 ws.merge_cells('A2:J2')
-                ws['A2'] = f'+/-1.0C  |  {"ADC to Polynomial" if proto == "old_adc" else "Direct Temperature"}'
-                hdrs = ['#','Target C','Bath C','Raw','Delta','n','Calc C','Error C','Pass','Time']
+                ws['A2'] = f'±1.0°C  |  {"ADC→多项式" if proto == "old_adc" else "直接温度"}'
+                hdrs = ['#','目标°C','水浴°C','原始值','波动','n','计算°C','误差°C','通过','时间']
                 for ci, h in enumerate(hdrs, 1):
                     c = ws.cell(row=4, column=ci, value=h)
                     c.font = Font(bold=True, size=11, color='FFFFFF')
@@ -1284,12 +1284,12 @@ class MainWindow(tk.Tk):
         mode_bar = ttk.Frame(main_frame)
         mode_bar.pack(fill='x', pady=(0, 6))
 
-        ttk.Label(mode_bar, text='Mode:', font=('', 10)).pack(side='left', padx=(0, 8))
+        ttk.Label(mode_bar, text='模式:', font=('', 10)).pack(side='left', padx=(0, 8))
 
-        ttk.Radiobutton(mode_bar, text='Calibrate (Single)', variable=self.mode_var,
+        ttk.Radiobutton(mode_bar, text='标定 (单设备)', variable=self.mode_var,
                         value='calibrate', command=self._on_mode_change).pack(side='left', padx=3)
 
-        ttk.Radiobutton(mode_bar, text='Verify (Multi-Device)', variable=self.mode_var,
+        ttk.Radiobutton(mode_bar, text='验证 (多设备)', variable=self.mode_var,
                         value='verify', command=self._on_mode_change).pack(side='left', padx=3)
 
         # 顶部: 设置区
@@ -1386,7 +1386,7 @@ class MainWindow(tk.Tk):
         self.save_config_btn.pack(side='right', padx=(10, 0))
 
         # Verify settings (new, hidden by default)
-        self.verify_frame = ttk.LabelFrame(parent, text='Verify — Devices & Points', padding=8)
+        self.verify_frame = ttk.LabelFrame(parent, text='验证 — 设备与温度点', padding=8)
         # Don't pack it yet — hidden initially
         self._build_verify_panel()
 
@@ -1396,8 +1396,8 @@ class MainWindow(tk.Tk):
         # Device list header
         hdr = ttk.Frame(parent)
         hdr.pack(fill='x')
-        ttk.Label(hdr, text='Devices:', font=('', 10, 'bold')).pack(side='left')
-        ttk.Button(hdr, text='+ Add Device', command=self._add_device_row).pack(side='right')
+        ttk.Label(hdr, text='设备列表:', font=('', 10, 'bold')).pack(side='left')
+        ttk.Button(hdr, text='+ 添加设备', command=self._add_device_row).pack(side='right')
 
         # Scrollable device list area
         self.device_canvas = tk.Canvas(parent, height=120, highlightthickness=0)
@@ -1422,13 +1422,13 @@ class MainWindow(tk.Tk):
         # Preset buttons
         preset_frame = ttk.Frame(parent)
         preset_frame.pack(fill='x', pady=(0, 4))
-        ttk.Label(preset_frame, text='Presets:', font=('', 9)).pack(side='left', padx=(0, 8))
+        ttk.Label(preset_frame, text='预设:', font=('', 9)).pack(side='left', padx=(0, 8))
 
         presets = [
-            ('Low (-20~0)', [-20, -15, -10, -5, 0]),
-            ('Mid (0~40)', [0, 5, 10, 15, 20, 25, 30, 35, 40]),
-            ('High (40~90)', [40, 50, 60, 70, 80, 90]),
-            ('5 deg C Step', list(range(5, 91, 5))),
+            ('低温(-20~0)', [-20, -15, -10, -5, 0]),
+            ('中温(0~40)', [0, 5, 10, 15, 20, 25, 30, 35, 40]),
+            ('高温(40~90)', [40, 50, 60, 70, 80, 90]),
+            ('5°C间隔', list(range(5, 91, 5))),
         ]
         for label, temps in presets:
             btn = ttk.Button(preset_frame, text=label,
@@ -1572,7 +1572,7 @@ class MainWindow(tk.Tk):
         running = (self.cal_thread and self.cal_thread.is_alive()) or \
                   (hasattr(self, 'verify_thread') and self.verify_thread and self.verify_thread.is_alive())
         if running:
-            messagebox.showwarning('Running', 'Stop the current run before switching modes.')
+            messagebox.showwarning('运行中', '请先停止当前运行再切换模式')
             # Revert radio button
             current = 'calibrate' if self.mode_var.get() == 'verify' else 'verify'
             self.mode_var.set(current)
@@ -1582,12 +1582,12 @@ class MainWindow(tk.Tk):
         if mode == 'calibrate':
             self.verify_frame.pack_forget()
             self.cal_frame.pack(fill='x', before=self.ctrl_frame)
-            self.start_btn.config(text='Start Calibrate')
-            self.data_notebook.tab(0, text='No data')
+            self.start_btn.config(text='▶ 开始标定')
+            self.data_notebook.tab(0, text='无数据')
         else:
             self.cal_frame.pack_forget()
             self.verify_frame.pack(fill='x', before=self.ctrl_frame)
-            self.start_btn.config(text='Start Verify')
+            self.start_btn.config(text='▶ 开始验证')
 
     def _build_fit_panel(self, parent):
         """拟合结果面板"""
@@ -1617,20 +1617,20 @@ class MainWindow(tk.Tk):
 
     def _build_data_table(self):
         """Bottom panel: tabbed data table for verification results"""
-        table_label = ttk.Label(self.bottom_frame, text='Data Table', font=('', 10, 'bold'))
+        table_label = ttk.Label(self.bottom_frame, text='数据表格', font=('', 10, 'bold'))
         table_label.pack(anchor='w', padx=4, pady=(4, 0))
 
         btn_row = ttk.Frame(self.bottom_frame)
         btn_row.pack(fill='x', padx=4, pady=(0, 2))
-        ttk.Button(btn_row, text='Load Excel...', command=self._load_excel_data).pack(side='left')
+        ttk.Button(btn_row, text='加载 Excel...', command=self._load_excel_data).pack(side='left')
 
         self.data_notebook = ttk.Notebook(self.bottom_frame)
         self.data_notebook.pack(fill='both', expand=True, padx=4, pady=4)
 
         # Placeholder tab
         placeholder = ttk.Frame(self.data_notebook)
-        self.data_notebook.add(placeholder, text='No data')
-        ttk.Label(placeholder, text='Start verification to see data here',
+        self.data_notebook.add(placeholder, text='无数据')
+        ttk.Label(placeholder, text='开始验证后数据将在此显示',
                   foreground='gray').pack(expand=True)
 
     def _toggle_conn_mode(self):
@@ -1719,7 +1719,7 @@ class MainWindow(tk.Tk):
             step = int(row['step_var'].get())
             devices.append((did, proto, step))
         if not devices:
-            messagebox.showwarning('No Devices', 'Add at least one device.')
+            messagebox.showwarning('无设备', '请至少添加一个设备')
             return
 
         # Parse temps
@@ -2242,7 +2242,7 @@ class MainWindow(tk.Tk):
         devices = s.get('devices', {})
         if devices:
             for did, (stable, mean, rng, n, _) in devices.items():
-                st_str = 'STABLE' if stable else 'collecting'
+                st_str = '已稳定' if stable else '采集中'
                 mean_v = mean or 0
                 lines.append(f'  {did}: mean={mean_v:.1f} range={rng} n={n} {st_str}')
 
@@ -2257,19 +2257,19 @@ class MainWindow(tk.Tk):
         # Create tab if needed
         tab_names = [self.data_notebook.tab(i, 'text') for i in range(self.data_notebook.tabs())]
         if did not in tab_names:
-            if 'No data' in tab_names:
-                idx = tab_names.index('No data')
+            if '无数据' in tab_names:
+                idx = tab_names.index('无数据')
                 self.data_notebook.forget(idx)
             frame = ttk.Frame(self.data_notebook)
             self.data_notebook.add(frame, text=did)
             tree = ttk.Treeview(frame, columns=('target', 'bath', 'raw', 'calc', 'error', 'pass_'),
                                 show='headings', height=10)
-            tree.heading('target', text='Target C'); tree.column('target', width=65)
-            tree.heading('bath', text='Bath C'); tree.column('bath', width=65)
-            tree.heading('raw', text='Raw'); tree.column('raw', width=55)
-            tree.heading('calc', text='Calc C'); tree.column('calc', width=65)
-            tree.heading('error', text='Error'); tree.column('error', width=55)
-            tree.heading('pass_', text='Pass'); tree.column('pass_', width=45)
+            tree.heading('target', text='目标°C'); tree.column('target', width=65)
+            tree.heading('bath', text='水浴°C'); tree.column('bath', width=65)
+            tree.heading('raw', text='原始值'); tree.column('raw', width=55)
+            tree.heading('calc', text='计算°C'); tree.column('calc', width=65)
+            tree.heading('error', text='误差'); tree.column('error', width=55)
+            tree.heading('pass_', text='通过'); tree.column('pass_', width=45)
             scroll = ttk.Scrollbar(frame, orient='vertical', command=tree.yview)
             tree.configure(yscrollcommand=scroll.set)
             tree.pack(side='left', fill='both', expand=True)
@@ -2297,8 +2297,8 @@ class MainWindow(tk.Tk):
         xlsx = msg.get('xlsx', '')
         results = msg.get('results', {})
         total = sum(len(v) for v in results.values())
-        self._set_status(f'Verify complete!\nResults saved to: {xlsx}')
-        messagebox.showinfo('Verify Complete',
+        self._set_status(f'验证完成!\n结果保存至: {xlsx}')
+        messagebox.showinfo('验证完成',
                             f'Verification complete!\n\n'
                             f'{total} data points across {len(results)} devices\n'
                             f'Excel: {xlsx}')
@@ -2485,8 +2485,8 @@ class MainWindow(tk.Tk):
             xlsx = data.get('xlsx', '')
             results = data.get('results', {})
             total = sum(len(v) for v in results.values())
-            self._log_status(f'Verify complete! {total} results → {xlsx}')
-            messagebox.showinfo('Verify Complete',
+            self._log_status(f'验证完成! {total} 条结果 → {xlsx}')
+            messagebox.showinfo('验证完成',
                                 f'Verification complete!\n\n'
                                 f'{total} data points across {len(results)} devices\n'
                                 f'Excel: {xlsx}')
@@ -2510,7 +2510,7 @@ class MainWindow(tk.Tk):
         if hasattr(self, 'verify_thread') and self.verify_thread and self.verify_thread.is_alive():
             running = True
         if running:
-            if messagebox.askyesno('Confirm', 'A verification/calibration is running. Stop and exit?'):
+            if messagebox.askyesno('确认', '标定/验证正在运行中，确定停止并退出？'):
                 if self.cal_thread:
                     self.cal_thread.stopped.set()
                 if self.verify_thread:
