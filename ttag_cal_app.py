@@ -12,9 +12,15 @@ from collections import deque
 
 # ---- 双设备复测模块 ----
 try:
-    from ttag_dual_verify import DEVICE_TABLE, COEFFS
+    from ttag_dual_verify import (DEVICE_TABLE, COEFFS, MultiReceiver,
+                                   StabilityDetector, calc_temperature,
+                                   adc_to_temperature)
 except ImportError:
     DEVICE_TABLE = {}
+    MultiReceiver = None
+    StabilityDetector = None
+    calc_temperature = None
+    adc_to_temperature = None
 
 # ---- 切换工作目录到脚本所在位置 ----
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
@@ -1012,6 +1018,19 @@ class CurveCanvas(tk.Canvas):
 # ============================================================
 # 主窗口
 # ============================================================
+class VerifyThread(threading.Thread):
+    """Stub — full implementation in Task 6"""
+    def __init__(self, params, status_queue):
+        super().__init__(daemon=True)
+        self.params = params
+        self.q = status_queue
+        self.paused = threading.Event()
+        self.paused.clear()
+        self.stopped = threading.Event()
+    def run(self):
+        pass
+
+
 class MainWindow(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -1020,6 +1039,7 @@ class MainWindow(tk.Tk):
         self.minsize(900, 600)
 
         self.cal_thread = None
+        self.verify_thread = None
         self.status_queue = queue.Queue(maxsize=100)
         self.fit_results = []
         self.mode_var = tk.StringVar(value='calibrate')
@@ -1215,6 +1235,22 @@ class MainWindow(tk.Tk):
         ttk.Label(parent, textvariable=self.temp_preview_var,
                   foreground='#666', font=('', 9)).pack(anchor='w', pady=(2, 0))
 
+        # Parameter row
+        param_row = ttk.Frame(parent)
+        param_row.pack(fill='x', pady=6)
+
+        ttk.Label(param_row, text='Tol:').pack(side='left')
+        self.verify_tol_var = tk.StringVar(value='0.3')
+        ttk.Entry(param_row, textvariable=self.verify_tol_var, width=5).pack(side='left', padx=(2, 12))
+
+        ttk.Label(param_row, text='Samples:').pack(side='left')
+        self.verify_samples_var = tk.StringVar(value='5')
+        ttk.Entry(param_row, textvariable=self.verify_samples_var, width=4).pack(side='left', padx=(2, 12))
+
+        ttk.Label(param_row, text='Threshold:').pack(side='left')
+        self.verify_thresh_var = tk.StringVar(value='5')
+        ttk.Entry(param_row, textvariable=self.verify_thresh_var, width=4).pack(side='left', padx=2)
+
     def _add_device_row(self, did='', proto='new_direct', step=0):
         row_frame = ttk.Frame(self.device_inner)
         row_frame.pack(fill='x', pady=2)
@@ -1290,13 +1326,13 @@ class MainWindow(tk.Tk):
         self.ctrl_frame = ctrl_frame
         ctrl_frame.pack(fill='x', pady=(8, 4))
 
-        self.start_btn = ttk.Button(ctrl_frame, text='▶ 开始标定', command=self._start_cal)
+        self.start_btn = ttk.Button(ctrl_frame, text='▶ 开始标定', command=self._start)
         self.start_btn.pack(side='left', padx=(0, 5))
 
-        self.pause_btn = ttk.Button(ctrl_frame, text='⏸ 暂停', command=self._pause_cal, state='disabled')
+        self.pause_btn = ttk.Button(ctrl_frame, text='⏸ 暂停', command=self._pause, state='disabled')
         self.pause_btn.pack(side='left', padx=(0, 5))
 
-        self.stop_btn = ttk.Button(ctrl_frame, text='■ 停止', command=self._stop_cal, state='disabled')
+        self.stop_btn = ttk.Button(ctrl_frame, text='■ 停止', command=self._stop, state='disabled')
         self.stop_btn.pack(side='left', padx=(0, 5))
 
         self.resume_btn = ttk.Button(ctrl_frame, text='📂 续跑...', command=self._resume_cal)
@@ -1439,6 +1475,68 @@ class MainWindow(tk.Tk):
     # ========================================
     # 标定控制
     # ========================================
+    def _start(self):
+        if self.mode_var.get() == 'verify':
+            self._start_verify()
+        else:
+            self._start_cal()
+
+    def _start_verify(self):
+        # Parse devices
+        devices = []
+        for row in self.device_rows:
+            try:
+                did = int(row['id_var'].get())
+            except ValueError:
+                messagebox.showwarning('Invalid', f'Device ID must be numeric: {row["id_var"].get()}')
+                return
+            proto = row['proto_var'].get()
+            step = int(row['step_var'].get())
+            devices.append((did, proto, step))
+        if not devices:
+            messagebox.showwarning('No Devices', 'Add at least one device.')
+            return
+
+        # Parse temps
+        temps = self._get_temp_points()
+        if temps is None or not temps:
+            messagebox.showwarning('Invalid', 'Temperature points contain errors or are empty.')
+            return
+
+        params = {
+            'devices': devices,
+            'temps': temps,
+            'bath_port': self.com_port_var.get(),
+            'bath_tolerance': float(self.verify_tol_var.get()),
+            'stability_samples': int(self.verify_samples_var.get()),
+            'stability_threshold': int(self.verify_thresh_var.get()),
+            'port': int(self.ttag_port_var.get()),
+            'connect_to': self.client_host_var.get() if self.conn_mode_var.get() == 'client' else None,
+        }
+        self.verify_thread = VerifyThread(params, self.status_queue)
+        self.verify_thread.start()
+        self.start_btn.config(state='disabled')
+        self.pause_btn.config(state='normal')
+        self.stop_btn.config(state='normal')
+
+    def _pause(self):
+        if self.mode_var.get() == 'verify' and self.verify_thread:
+            if self.verify_thread.paused.is_set():
+                self.verify_thread.paused.clear()
+                self.pause_btn.config(text='Pause')
+            else:
+                self.verify_thread.paused.set()
+                self.pause_btn.config(text='Resume')
+        else:
+            self._pause_cal()
+
+    def _stop(self):
+        if self.mode_var.get() == 'verify' and self.verify_thread:
+            self.verify_thread.stopped.set()
+            self.verify_thread.paused.clear()
+        else:
+            self._stop_cal()
+
     def _get_params(self):
         """从 UI 收集所有参数"""
         device_id = int(self.device_id_var.get())
