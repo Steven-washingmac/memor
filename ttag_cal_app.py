@@ -1019,7 +1019,7 @@ class CurveCanvas(tk.Canvas):
 # 主窗口
 # ============================================================
 class VerifyThread(threading.Thread):
-    """Stub — full implementation in Task 6"""
+    """Dual-device verification thread — runs water bath + base station + collects data"""
     def __init__(self, params, status_queue):
         super().__init__(daemon=True)
         self.params = params
@@ -1027,8 +1027,220 @@ class VerifyThread(threading.Thread):
         self.paused = threading.Event()
         self.paused.clear()
         self.stopped = threading.Event()
+
+    def _push(self, msg_type, data):
+        try:
+            self.q.put_nowait({'type': msg_type, **data})
+        except queue.Full:
+            pass
+
     def run(self):
-        pass
+        import time
+        from datetime import datetime
+        params = self.params
+        devices = params['devices']
+        device_ids = [d[0] for d in devices]
+
+        try:
+            # Connect water bath
+            self._push('log', {'text': 'Connecting water bath...'})
+            wb = WaterBath(port=params['bath_port'])
+            pv = wb.get_temperature()
+            self._push('log', {'text': f'Water bath OK: PV={pv:.2f}C' if pv else 'Water bath connected'})
+
+            # Connect base station
+            receiver = MultiReceiver(device_ids, port=params['port'],
+                                     connect_to=params.get('connect_to'))
+            receiver.start()
+            self._push('log', {'text': 'Waiting for base station...'})
+            found = set()
+            for _ in range(40):
+                time.sleep(0.5)
+                if self.stopped.is_set():
+                    return
+                for did in device_ids:
+                    if receiver.get_state(did).get('hits', 0) > 0:
+                        found.add(did)
+                if len(found) >= len(device_ids):
+                    break
+            self._push('log', {'text': f'Devices found: {len(found)}/{len(device_ids)}'})
+
+            # Excel setup
+            onedrive = os.path.join(os.path.expanduser('~'), 'OneDrive', 'desktop')
+            if not os.path.isdir(onedrive):
+                onedrive = os.path.join(os.path.expanduser('~'), 'Desktop')
+            dev_names = '_'.join(str(d) for d in sorted(device_ids))
+            xlsx_path = os.path.join(onedrive, f'TTAG_dual_{dev_names}.xlsx')
+            os.makedirs(os.path.dirname(xlsx_path), exist_ok=True)
+            self._push('log', {'text': f'Excel: {os.path.basename(xlsx_path)}'})
+
+            temps = params['temps']
+            total = len(temps)
+            t0 = time.time()
+            all_results = {did: [] for did in device_ids}
+
+            for i, target in enumerate(temps):
+                if self.stopped.is_set():
+                    break
+                while self.paused.is_set():
+                    time.sleep(0.5)
+                    if self.stopped.is_set():
+                        break
+                if self.stopped.is_set():
+                    break
+
+                # Determine active devices
+                active = []
+                for did, proto, step in devices:
+                    if step == 0 or abs(target % step) < 0.01 or abs(target % step - step) < 0.01:
+                        active.append((did, proto))
+
+                # Set water bath
+                wb.set_temperature(target)
+
+                # Wait for stability
+                t1 = time.time()
+                bath_ok = False
+                while time.time() - t1 < 900:
+                    if self.stopped.is_set():
+                        break
+                    pv = wb.get_temperature()
+                    pwr = wb.get_status()
+                    if pv is not None and abs(pv - target) <= params['bath_tolerance']:
+                        time.sleep(2)
+                        pv2 = wb.get_temperature()
+                        if pv2 is not None and abs(pv2 - pv) < 0.15 and abs(pv2 - target) <= params['bath_tolerance']:
+                            bath_ok = True
+                            break
+                    self._push('status', {
+                        'phase': 'bath', 'target': target, 'pv': pv, 'pwr': pwr,
+                        'done': i, 'total': total, 'elapsed': time.time() - t0,
+                        'disp_i': i + 1,
+                    })
+                    time.sleep(0.5)
+
+                if not bath_ok:
+                    for did in device_ids:
+                        all_results[did].append({
+                            'target': target, 'pv': None, 'adc_mean': None, 'adc_range': None,
+                            'adc_n': 0, 't_calc': None, 'error': None, 'passed': False,
+                            'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                        })
+                    self._push('log', {'text': f'Bath timeout at {target}C, skipping'})
+                    continue
+
+                # Collect data from active devices
+                detectors = {did: StabilityDetector(
+                    params['stability_samples'], params['stability_threshold']
+                ) for did, _ in active}
+                last_hits = {did: receiver.get_state(did).get('hits', 0) for did, _ in active}
+
+                t2 = time.time()
+                while time.time() - t2 < 240:
+                    if self.stopped.is_set():
+                        break
+                    for did, _ in active:
+                        st = receiver.get_state(did)
+                        cur = st.get('hits', 0)
+                        v = st.get('adc')
+                        if v is not None and cur != last_hits[did]:
+                            detectors[did].feed(v)
+                            last_hits[did] = cur
+                    all_stable = all(detectors[did].check()[0] for did, _ in active)
+                    if all_stable:
+                        break
+                    self._push('status', {
+                        'phase': 'adc', 'target': target,
+                        'done': i, 'total': total, 'elapsed': time.time() - t0,
+                        'disp_i': i + 1, 'pv': wb.get_temperature(),
+                        'devices': {did: detectors[did].check() for did, _ in active},
+                    })
+                    time.sleep(0.3)
+
+                # Record results
+                for did, proto in active:
+                    _, mean, rng, n, _ = detectors[did].check()
+                    st = receiver.get_state(did)
+                    adc_mean = mean if mean is not None else (st.get('adc') or 0)
+                    tag_temp = st.get('temperature')
+                    t_calc = calc_temperature(proto, adc_mean, tag_temp)
+                    pv_now = wb.get_temperature()
+                    error = t_calc - pv_now if (t_calc is not None and pv_now is not None) else None
+                    passed = abs(error) <= 1.0 if error is not None else False
+                    result = {
+                        'target': target, 'pv': pv_now,
+                        'adc_mean': adc_mean, 'adc_range': rng, 'adc_n': n,
+                        't_calc': t_calc, 'error': error, 'passed': passed,
+                        'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    }
+                    all_results[did].append(result)
+                    self._push('result', {'did': did, **result})
+
+                # Save Excel
+                self._save_excel(xlsx_path, devices, all_results)
+
+            self._push('complete', {'results': all_results, 'xlsx': xlsx_path})
+
+        except Exception as e:
+            self._push('error', {'text': str(e)})
+            import traceback
+            traceback.print_exc()
+
+    def _save_excel(self, path, devices, all_results):
+        from openpyxl import Workbook, load_workbook
+        from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
+
+        thin = Border(left=Side(style='thin'), right=Side(style='thin'),
+                       top=Side(style='thin'), bottom=Side(style='thin'))
+        hdr_fill = PatternFill(start_color='4472C4', end_color='4472C4', fill_type='solid')
+        ok_fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')
+        ng_fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')
+
+        if os.path.exists(path):
+            wb = load_workbook(path)
+        else:
+            wb = Workbook()
+            wb.remove(wb.active)
+
+        for did, proto, _ in devices:
+            sname = f'{did} {"ADC Verify" if proto == "old_adc" else "Temp Verify"}'
+            if sname not in wb.sheetnames:
+                ws = wb.create_sheet(sname)
+                ws.merge_cells('A1:J1')
+                ws['A1'] = f'TTAG {did} Verify Results'
+                ws['A1'].font = Font(bold=True, size=14)
+                ws.merge_cells('A2:J2')
+                ws['A2'] = f'+/-1.0C  |  {"ADC to Polynomial" if proto == "old_adc" else "Direct Temperature"}'
+                hdrs = ['#','Target C','Bath C','Raw','Delta','n','Calc C','Error C','Pass','Time']
+                for ci, h in enumerate(hdrs, 1):
+                    c = ws.cell(row=4, column=ci, value=h)
+                    c.font = Font(bold=True, size=11, color='FFFFFF')
+                    c.fill = hdr_fill
+                    c.alignment = Alignment(horizontal='center')
+                    c.border = thin
+                widths = [6,12,14,10,10,6,12,10,12,20]
+                for ci, w in enumerate(widths, 1):
+                    ws.column_dimensions[chr(64+ci)].width = w
+
+            ws = wb[sname]
+            results = all_results.get(did, [])
+            for j, r in enumerate(results):
+                ri = 5 + j
+                vals = [j+1, r['target'], r['pv'] if r['pv'] else '',
+                        r['adc_mean'] if r['adc_mean'] else '',
+                        r['adc_range'] if r['adc_range'] else '',
+                        r['adc_n'],
+                        round(r['t_calc'],2) if r['t_calc'] else '',
+                        round(r['error'],2) if r['error'] else '',
+                        'YES' if r['passed'] else 'NO',
+                        r.get('time', '')]
+                for ci, v in enumerate(vals, 1):
+                    c = ws.cell(row=ri, column=ci, value=v)
+                    c.alignment = Alignment(horizontal='center')
+                    c.border = thin
+                    c.fill = ok_fill if r['passed'] else ng_fill
+
+        wb.save(path)
 
 
 class MainWindow(tk.Tk):
@@ -1927,17 +2139,33 @@ class MainWindow(tk.Tk):
 
     def _handle_msg(self, msg):
         msg_type = msg['type']
-        data = msg['data']
+        # Support both CalibrationThread (wraps data with 'data' key)
+        # and VerifyThread (unpacks data with **data pattern)
+        if 'data' in msg:
+            data = msg['data']
+        else:
+            data = {k: v for k, v in msg.items() if k != 'type'}
 
         if msg_type == 'status':
             self._update_status(data)
         elif msg_type == 'fit_update':
             self._update_fit_panel(data)
         elif msg_type == 'log':
+            # CalibrationThread sends plain string, VerifyThread sends {'text': ...}
+            if isinstance(data, dict) and 'text' in data:
+                data = data['text']
             self._log_status(data)
-        elif msg_type == 'done':
+        elif msg_type == 'done' or msg_type == 'complete':
             self._on_done(data)
+        elif msg_type == 'result':
+            # VerifyThread per-device result — log briefly
+            did = data.get('did', '?')
+            passed = 'PASS' if data.get('passed') else 'FAIL'
+            self._log_status(f'[{did}] {data.get("target","?")}C: {passed}')
         elif msg_type == 'error':
+            # CalibrationThread sends plain string, VerifyThread sends {'text': ...}
+            if isinstance(data, dict) and 'text' in data:
+                data = data['text']
             self._log_status(f'错误: {data}')
             messagebox.showerror('标定出错', str(data))
             self._set_running_state(False)
@@ -2110,16 +2338,29 @@ class MainWindow(tk.Tk):
 
     def _on_done(self, data):
         self._set_running_state(False)
-        self._log_status(f'标定完成! {data["records"]} 个点 → {data["output"]}')
 
-        # 更新曲线
-        if self.cal_thread and self.cal_thread.records:
-            self.curve.set_data(self.cal_thread.records)
+        if 'xlsx' in data:
+            # Verify completion
+            xlsx = data.get('xlsx', '')
+            results = data.get('results', {})
+            total = sum(len(v) for v in results.values())
+            self._log_status(f'Verify complete! {total} results → {xlsx}')
+            messagebox.showinfo('Verify Complete',
+                                f'Verification complete!\n\n'
+                                f'{total} data points across {len(results)} devices\n'
+                                f'Excel: {xlsx}')
+        else:
+            # Calibration done
+            self._log_status(f'标定完成! {data["records"]} 个点 → {data["output"]}')
 
-        messagebox.showinfo('标定完成',
-                            f'标定完成!\n\n{data["records"]} 个数据点\n'
-                            f'输出: {data["output"]}\n\n'
-                            f'请在右侧面板选择拟合模型并导出。')
+            # 更新曲线
+            if self.cal_thread and self.cal_thread.records:
+                self.curve.set_data(self.cal_thread.records)
+
+            messagebox.showinfo('标定完成',
+                                f'标定完成!\n\n{data["records"]} 个数据点\n'
+                                f'输出: {data["output"]}\n\n'
+                                f'请在右侧面板选择拟合模型并导出。')
 
     def _on_close(self):
         if self.cal_thread and self.cal_thread.is_alive():
