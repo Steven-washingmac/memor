@@ -1187,8 +1187,27 @@ class VerifyThread(threading.Thread):
                     all_results[did].append(result)
                     self._push('result', {'did': did, **result})
 
-                # Save Excel
-                self._save_excel(xlsx_path, devices, all_results)
+                # Save Excel（失败则写 CSV 备份，不中断运行）
+                try:
+                    self._save_excel(xlsx_path, devices, all_results)
+                except Exception as e:
+                    self._push('log', {'text': f'Excel 写入失败: {e}'})
+                    try:
+                        import csv
+                        csv_path = xlsx_path.replace('.xlsx', '_backup.csv')
+                        is_new = not os.path.exists(csv_path)
+                        with open(csv_path, 'a', newline='', encoding='utf-8-sig') as cf:
+                            wf = csv.writer(cf)
+                            if is_new:
+                                wf.writerow(['设备号','目标°C','水浴°C','原始值','波动','n','计算°C','误差°C','通过','时间'])
+                            for did in device_ids:
+                                for r in all_results[did]:
+                                    wf.writerow([did, r['target'], r['pv'], r['adc_mean'],
+                                                 r['adc_range'], r['adc_n'], r['t_calc'],
+                                                 r['error'], 'YES' if r['passed'] else 'NO', r['time']])
+                        self._push('log', {'text': f'数据已保存至 CSV 备份: {os.path.basename(csv_path)}'})
+                    except Exception as ce:
+                        self._push('log', {'text': f'CSV 备份也失败: {ce}'})
 
             self._push('complete', {'results': all_results, 'xlsx': xlsx_path})
 
