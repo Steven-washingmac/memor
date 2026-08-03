@@ -1029,9 +1029,17 @@ class MainWindow(tk.Tk):
     # UI 构建
     # ========================================
     def _build_ui(self):
-        # 主框架: 左右分栏
-        main_frame = ttk.Frame(self, padding=8)
-        main_frame.pack(fill='both', expand=True)
+        # Vertical split: controls | data table
+        self.paned = tk.PanedWindow(self, orient=tk.VERTICAL, sashrelief=tk.RAISED, sashwidth=6)
+        self.paned.pack(fill='both', expand=True)
+
+        self.top_frame = ttk.Frame(self.paned, padding=8)
+        self.bottom_frame = ttk.Frame(self.paned)
+
+        self.paned.add(self.top_frame, minsize=200, stretch='always')
+        self.paned.add(self.bottom_frame, minsize=100, stretch='always')
+
+        main_frame = self.top_frame  # alias for existing code to work
 
         # 顶部: 设置区
         self._build_settings(main_frame)
@@ -1049,6 +1057,9 @@ class MainWindow(tk.Tk):
 
         # 右下: 拟合面板
         self._build_fit_panel(bottom)
+
+        # Build data table in bottom frame
+        self._build_data_table()
 
     def _build_settings(self, parent):
         """构建设置区域"""
@@ -1183,6 +1194,20 @@ class MainWindow(tk.Tk):
         self.fit_var.trace_add('write', lambda *a: self._update_curve_with_fit())
         self.export_btn = ttk.Button(fit_frame, text='导出所选模型 →', command=self._export_fit, state='disabled')
         self.export_btn.pack(fill='x', pady=(6, 0))
+
+    def _build_data_table(self):
+        """Bottom panel: tabbed data table for verification results"""
+        table_label = ttk.Label(self.bottom_frame, text='Data Table', font=('', 10, 'bold'))
+        table_label.pack(anchor='w', padx=4, pady=(4, 0))
+
+        self.data_notebook = ttk.Notebook(self.bottom_frame)
+        self.data_notebook.pack(fill='both', expand=True, padx=4, pady=4)
+
+        # Placeholder tab
+        placeholder = ttk.Frame(self.data_notebook)
+        self.data_notebook.add(placeholder, text='No data')
+        ttk.Label(placeholder, text='Start verification to see data here',
+                  foreground='gray').pack(expand=True)
 
     def _toggle_conn_mode(self):
         if self.conn_mode_var.get() == 'client':
