@@ -67,7 +67,8 @@ class TagData:
 class TRGFrame:
     """完整的数据帧"""
     __slots__ = ('raw', 'data_len', 'station_id', 'func_code', 'sn',
-                 'tag_count', 'tags', 'checksum', 'valid')
+                 'tag_count', 'tags', 'checksum', 'valid',
+                 'is_new_protocol')
 
     def __init__(self):
         self.raw        = b''
@@ -79,6 +80,7 @@ class TRGFrame:
         self.tags       = []
         self.checksum   = 0
         self.valid      = True
+        self.is_new_protocol = False
 
 
 def parse_frame(data: bytes, debug: bool = False) -> TRGFrame:
@@ -140,6 +142,8 @@ def parse_frame(data: bytes, debug: bool = False) -> TRGFrame:
             elif remaining == 9 * frame.tag_count:
                 is_new_protocol = False
                 tag_bytes_per_tag = 9
+
+        frame.is_new_protocol = is_new_protocol
 
         if debug:
             proto = '新协议 T100-316' if is_new_protocol else '旧协议 T100-230'
@@ -652,10 +656,20 @@ class TRGServer:
 
         try:
             self.socket.bind((self.host, self.port))
-        except OSError:
+        except OSError as e:
             if self.host != '0.0.0.0':
-                print(f"[网络] 绑定 {self.host} 失败，回退到 0.0.0.0...")
-                self.socket.bind(('0.0.0.0', self.port))
+                try:
+                    self.socket.bind(('0.0.0.0', self.port))
+                except OSError:
+                    print(f"[网络] 端口 {self.port} 被占用 (TIME_WAIT)，自动切换客户端模式...")
+                    self.socket.close()
+                    self.connect_to = '192.168.3.188:20226'
+                    return self._start_as_client()
+            else:
+                print(f"[网络] 端口 {self.port} 被占用 (TIME_WAIT)，自动切换客户端模式...")
+                self.socket.close()
+                self.connect_to = '192.168.3.188:20226'
+                return self._start_as_client()
 
         self.socket.listen(5)
         self.socket.settimeout(1.0)

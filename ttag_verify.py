@@ -33,6 +33,7 @@ from ttag_monitor import FRAME_HEADER, parse_frame as monitor_parse_frame
 # 标定日期: 2026-07-27 | 数据点: 499 | R² = 0.999986
 # ADC 范围: 219 ~ 938 | 温度范围: -20 ~ 80°C
 # ============================================================
+ADC_MIN, ADC_MAX = 219, 938
 COEFFS = [
     -1.371175217700e-15,   # a6
      3.869551921400e-12,   # a5
@@ -59,19 +60,27 @@ def adc_to_temperature(adc):
 # TTAG 接收器（复用 ttag_calibration.py）
 # ============================================================
 def parse_frame(data):
+    """解析 TRG 帧 — T100-316 直接温度（兼容 8B/9B 标签）"""
     tags = []
     try:
         frame = monitor_parse_frame(data)
-        if frame.valid:
-            for tag in frame.tags:
-                tags.append({
-                    'tag_id': tag.tag_id, 'adc': tag.adc,
-                    'rssi': tag.rssi, 'tag_type': tag.tag_type,
-                    'temperature': tag.temperature,  # 新协议直接用温度
-                })
+        if not frame.valid:
+            return tags, True
+        # 直接从 monitor 解析结果中提取，温度永远用 temp_raw/10
+        for tag in frame.tags:
+            raw = tag.adc  # monitor 把 temp_raw 存在 adc 字段
+            if raw == 0xFFFF:
+                continue
+            if raw > 32767:
+                raw -= 65536
+            tags.append({
+                'tag_id': tag.tag_id, 'adc': raw,
+                'rssi': tag.rssi, 'tag_type': tag.tag_type,
+                'temperature': raw / 10.0,  # 强制 temp_raw/10
+            })
     except Exception:
         pass
-    return tags
+    return tags, True
 
 
 class TtagReceiver:
@@ -87,7 +96,7 @@ class TtagReceiver:
         self.hit_count = 0
         self.frame_count = 0
         self.running = False
-        self.new_protocol = None  # None=未知, True=新协议, False=旧协议
+        self.new_protocol = True  # T100-316 新协议，直接温度
         self._lock = threading.Lock()
 
     def start(self):
@@ -133,9 +142,19 @@ class TtagReceiver:
                 sock.listen(5)
                 sock.settimeout(1.0)
             except OSError:
-                print(f"  端口 {self.port} 被占用")
+                print(f"  端口 {self.port} 被占用，自动切换客户端模式...")
                 sock.close()
-                return
+                # 自动回退：客户端模式连接基站
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                sock.settimeout(5)
+                try:
+                    sock.connect(('192.168.3.188', self.port))
+                    sock.settimeout(2.0)
+                    is_client = True
+                except Exception:
+                    print(f"  无法连接到基站 192.168.3.188:{self.port}")
+                    return
 
         buffer = b''
         while self.running:
@@ -191,12 +210,10 @@ class TtagReceiver:
             frame_data = buffer[:frame_len]
             buffer = buffer[frame_len:]
             self.frame_count += 1
-            for t in parse_frame(frame_data):
+            tags, _is_new = parse_frame(frame_data)
+            for t in tags:
                 if t['tag_id'] == self.device_id:
                     temp_val = t.get('temperature')
-                    # 检测协议类型
-                    if self.new_protocol is None and temp_val is not None:
-                        self.new_protocol = True  # 新协议：标签直接给温度
                     if t['adc'] == 0xFFFF:
                         continue  # 低电量，跳过
                     with self._lock:
@@ -258,7 +275,7 @@ def progress_bar(done, total, width=30):
 # ============================================================
 def run_verify(device_id, points, connect_to=None, port=20226,
                bath_port='COM3', adc_samples=5, adc_threshold=5,
-               bath_tolerance=0.1):
+               bath_tolerance=0.1, excel_path=None):
     """
     执行复测验证。
 
@@ -305,11 +322,10 @@ def run_verify(device_id, points, connect_to=None, port=20226,
             break
     st = ttag.get_state()
     if st.get('hits', 0) > 0:
-        adc_v = st['adc']
-        t_calc = adc_to_temperature(adc_v) if adc_v else None
-        t_str = f" → {t_calc:.2f}°C" if t_calc is not None else ""
-        print(f"      ✓ 已连接  ADC={adc_v}{t_str}  RSSI={st['rssi']}  "
-              f"命中={st['hits']}次")
+        tag_t = st.get('temperature')
+        t_str = f"{tag_t:.2f}°C" if tag_t is not None else "?"
+        print(f"      ✓ 已连接  T100-316  T={t_str}  "
+              f"RSSI={st['rssi']}  命中={st['hits']}次")
     else:
         print(f"      ⚠ 30s 内未收到数据，请检查基站。继续等待...")
 
@@ -318,8 +334,11 @@ def run_verify(device_id, points, connect_to=None, port=20226,
     t0_total = time.time()
 
     # ---- 初始化 Excel（提前建好，每点立即写入）----
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    xlsx_path = os.path.join(script_dir, 'ADCTdata', f'verify_{device_id}.xlsx')
+    if excel_path:
+        xlsx_path = excel_path
+    else:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        xlsx_path = os.path.join(script_dir, 'ADCTdata', f'verify_{device_id}.xlsx')
     os.makedirs(os.path.dirname(xlsx_path), exist_ok=True)
 
     def _ensure_excel():
@@ -409,9 +428,11 @@ def run_verify(device_id, points, connect_to=None, port=20226,
             ws['A1'].font = Font(bold=True, size=14)
             ws['A1'].alignment = Alignment(horizontal='center')
             ws.merge_cells('A2:J2')
-            ws['A2'] = f'合格线: ±1.0°C  |  拟合: 6阶多项式 (R²=0.999986)'
+            ws['A2'] = '合格线: ±1.0°C  |  协议: T100-316 直接温度'
             ws['A2'].alignment = Alignment(horizontal='center')
-            hdrs = ['序号', '目标(°C)', '水浴实际(°C)', 'ADC均值', 'ADC峰峰值',
+            col4 = '温度原始值'
+            col5 = '原始值波动'
+            hdrs = ['序号', '目标(°C)', '水浴实际(°C)', col4, col5,
                     '采样数', '计算温度(°C)', '误差(°C)', '通过(±1°C)', '测试时间']
             for ci, h in enumerate(hdrs, 1):
                 c = ws.cell(row=4, column=ci, value=h)
@@ -448,9 +469,8 @@ def run_verify(device_id, points, connect_to=None, port=20226,
         wb.save(xlsx_path)
 
     # ---- 确认开始 ----
-    print(f"\n[3/3] 复测点清单:")
+    print(f"\n[3/3] 复测点清单 (T100-316 直接温度):")
     for i, (t, label) in enumerate(points, 1):
-        t_calc_est = adc_to_temperature(500)
         print(f"      {i:>2}. {t:>6.1f}°C  [{label}]")
     print()
 
@@ -585,16 +605,18 @@ def run_verify(device_id, points, connect_to=None, port=20226,
             tag_t = ts.get('temperature')
             n_frames = ts.get('frames', 0)
             conn = '[LINK]' if n_frames > 0 else '[WAIT]'
-            if ts.get('new_protocol') and tag_t is not None:
+            if tag_t is not None:
                 print(f"  TTAG: T={tag_t:.2f}°C  RSSI={ts.get('rssi')}  "
                       f"命中={ts.get('hits', 0)}  {conn}")
             else:
-                print(f"  TTAG: ADC={adc_cur}  RSSI={ts.get('rssi')}  "
+                print(f"  TTAG: 等待数据  RSSI={ts.get('rssi')}  "
                       f"命中={ts.get('hits', 0)}  {conn}")
             if results:
                 last_r = results[-1]
+                last_err = last_r.get('error')
+                last_err_str = f"{last_err:+.2f}°C" if last_err is not None else "N/A"
                 print(f"  已复测: {len(results)} 点 | "
-                      f"上一点误差: {last_r['error']:+.2f}°C")
+                      f"上一点误差: {last_err_str}")
             print("=" * 64)
 
             # 方向性稳定判定 + 二次确认
@@ -614,7 +636,7 @@ def run_verify(device_id, points, connect_to=None, port=20226,
                     pv2 = wb.get_temperature()
                     if pv2 is not None:
                         drift = abs(pv2 - pv_before) if pv_before is not None else 999
-                        drift_limit = 0.1 if plateau else 0.05
+                        drift_limit = 0.3 if plateau else 0.15
                         if need_cool:
                             ok = (pv2 <= target + bath_tolerance
                                   and abs(pv2 - target) <= max(bath_tolerance, 0.3 if plateau else 0)
@@ -661,16 +683,14 @@ def run_verify(device_id, points, connect_to=None, port=20226,
 
             stable, mean, rng, n, span = adc_det.check()
 
-            tag_temp = ts.get('temperature')  # 新协议直接温度
-            is_new_proto = ts.get('new_protocol', False)
+            tag_temp = ts.get('temperature')
 
             clear_screen()
             print("=" * 64)
             print(f"  TTAG 复测程序 | 设备 {device_id} | "
-                  f"第 {disp_i}/{total_points} 点")
+                  f"第 {disp_i}/{total_points} 点  [T100-316]")
             print("=" * 64)
-            proto_label = '温度' if is_new_proto else 'ADC'
-            print(f"  采集{proto_label}数据 ... 目标={target}°C")
+            print(f"  采集温度数据 ... 目标={target}°C")
             print(f"  进度: {progress_bar(done, total_points)} "
                   f"{done * 100 // total_points}%")
             print("-" * 64)
@@ -680,14 +700,8 @@ def run_verify(device_id, points, connect_to=None, port=20226,
             if adc_v is not None:
                 st_str = '● STABLE' if stable else '○ 采集中'
                 fresh = '(旧)' if n == 0 else f'n={n}'
-                if is_new_proto and tag_temp is not None:
-                    t_now_str = f"T_tag={tag_temp:.2f}°C"
-                    val_str = f"Temp_raw={adc_v}"
-                else:
-                    t_now = adc_to_temperature(adc_v)
-                    t_now_str = f"→ {t_now:.2f}°C" if t_now is not None else ""
-                    val_str = f"ADC={adc_v}"
-                print(f"  TTAG: {val_str} {fresh}  {st_str}  "
+                t_now_str = f"T={tag_temp:.2f}°C" if tag_temp is not None else ""
+                print(f"  TTAG: raw={adc_v} {fresh}  {st_str}  "
                       f"μ={mean or 0:.1f}  Δ={rng}  {t_now_str}  [{adc_el:.0f}s]")
                 if n == 0 and adc_el > 15:
                     n_frames = ts.get('frames', 0)
@@ -722,25 +736,17 @@ def run_verify(device_id, points, connect_to=None, port=20226,
         # ---- Step 4: 计算温度 & 对比 ----
         pv_final = wb.get_temperature()
         pv_now = pv_final if pv_final is not None else target
-        is_new_proto = ttag.get_state().get('new_protocol', False)
-
-        if is_new_proto:
-            # 新协议：标签直接给温度，adc_mean 实际存的是温度原始值 (×10)
-            # 直接用标签最新温度值
-            tag_temp = ttag.get_state().get('temperature')
-            if tag_temp is not None:
-                t_calculated = tag_temp
-            elif adc_mean is not None:
-                # 备用：从原始值换算（有符号, /10）
-                raw = adc_mean
-                if raw > 32767:
-                    raw = raw - 65536
-                t_calculated = raw / 10.0
-            else:
-                t_calculated = None
+        # T100-316: 标签直接报温度，adc_mean 是 temp_raw (÷10=°C)
+        tag_temp = ttag.get_state().get('temperature')
+        if tag_temp is not None:
+            t_calculated = tag_temp
+        elif adc_mean is not None:
+            raw = adc_mean
+            if raw > 32767:
+                raw = raw - 65536
+            t_calculated = raw / 10.0
         else:
-            # 旧协议：ADC → 多项式 → 温度
-            t_calculated = adc_to_temperature(adc_mean) if adc_mean is not None else None
+            t_calculated = None
 
         if t_calculated is not None and pv_now is not None:
             error = t_calculated - pv_now
@@ -750,7 +756,7 @@ def run_verify(device_id, points, connect_to=None, port=20226,
         passed = abs(error) <= 1.0 if error is not None else False
         status_icon = '✅' if passed else '❌'
 
-        note = '新协议(直接温度)' if is_new_proto else ''
+        note = 'T100-316'
         results.append({
             'target': target, 'label': label,
             'pv': pv_now, 'adc_mean': adc_mean, 'adc_range': adc_range,
@@ -771,31 +777,14 @@ def run_verify(device_id, points, connect_to=None, port=20226,
         print(f"  📊 第 {disp_i} 点结果:")
         print(f"     目标温度:  {target}°C")
         print(f"     水浴实际:  {pv_now:.2f}°C")
-        if is_new_proto:
-            print(f"     标签温度:  {t_calculated:.2f}°C" if t_calculated is not None else f"     标签温度:  N/A")
-        else:
-            print(f"     ADC 均值:  {adc_mean:.1f}  (Δ={adc_range}, n={adc_n})")
-            print(f"     计算温度:  {t_calculated:.2f}°C" if t_calculated is not None else f"     计算温度:  N/A")
+        print(f"     标签温度:  {t_calculated:.2f}°C" if t_calculated is not None else f"     标签温度:  N/A")
         print(f"     误  差:    {error:+.2f}°C  {status_icon}" if error is not None else f"     误  差:    N/A")
         print(f"  {'─'*50}")
 
-        # 超标时暂停询问，正常则自动继续
+        # 自动继续下一个点
         if disp_i < total_points:
-            if not passed:
-                # 超标：暂停让用户决定是否继续
-                print(f"\n  ⚠ 误差 {error:+.2f}°C 超出 ±1°C！")
-                try:
-                    ans = input(f"  是否继续？[Y/n]: ").strip().lower()
-                    if ans in ('n', 'no', '否'):
-                        print("  用户中止")
-                        break
-                except (EOFError, KeyboardInterrupt):
-                    print("\n  用户中止")
-                    break
-            else:
-                # 正常：短暂显示后自动继续
-                print(f"\n  ✅ 通过，{3}秒后自动继续下一个点...")
-                time.sleep(3)
+            print(f"\n  {status_icon} 误差 {error:+.2f}°C，{3}秒后自动继续..." if error is not None else f"\n  {3}秒后自动继续...")
+            time.sleep(3)
 
     # ================================================================
     # 汇总
@@ -803,33 +792,26 @@ def run_verify(device_id, points, connect_to=None, port=20226,
     clear_screen()
     print("=" * 64)
     print("  TTAG 复测程序 — 汇总")
-    print(f"  设备: {device_id} | "
-          f"总耗时: {int((time.time() - t0_total) / 60)}min"
-          f"{' | 新协议(直接温度)' if ttag.get_state().get('new_protocol') else ' | 旧协议(ADC→T)'}")
+    print(f"  设备: {device_id} | T100-316 | "
+          f"总耗时: {int((time.time() - t0_total) / 60)}min")
     print("=" * 64)
-    val_col = '标签°C' if ttag.get_state().get('new_protocol') else 'ADC'
-    print(f"  {'#':<4} {'目标°C':<9} {'水浴°C':<9} {val_col:<9} "
-          f"{'计算°C':<9} {'误差°C':<9} {'±1°C?':<8}")
+    print(f"  {'#':<4} {'目标°C':<9} {'水浴°C':<9} {'标签°C':<9} "
+          f"{'误差°C':<9} {'±1°C?':<8}")
     print(f"  {'-'*56}")
 
     pass_count = 0
     fail_count = 0
-    is_new = ttag.get_state().get('new_protocol', False)
     for j, r in enumerate(results, 1):
         pv_s = f"{r['pv']:.2f}" if r['pv'] is not None else "?"
         tc_s = f"{r['t_calc']:.2f}" if r['t_calc'] is not None else "?"
         err_s = f"{r['error']:+.2f}" if r['error'] is not None else "?"
-        if is_new:
-            adc_s = f"{tc_s}"
-        else:
-            adc_s = f"{r['adc_mean']:.1f}" if r['adc_mean'] is not None else "?"
         flag = '✅ 通过' if r['passed'] else '❌ 超标'
         if r['passed']:
             pass_count += 1
         else:
             fail_count += 1
-        print(f"  {j:<4} {r['target']:<9} {pv_s:<9} {adc_s:<7} "
-              f"{tc_s:<9} {err_s:<9} {flag}   {r['label']}")
+        print(f"  {j:<4} {r['target']:<9} {pv_s:<9} {tc_s:<9} "
+              f"{err_s:<9} {flag}   {r['label']}")
 
     print(f"  {'-'*56}")
     print(f"  通过: {pass_count}/{len(results)}  |  "
@@ -924,13 +906,12 @@ def input_points():
                 if not temps:
                     print("  范围无效，请检查起始/结束/步长")
                     continue
-                # 按温度从低到高排序
-                temps.sort()
+                # 保持用户输入的方向
                 print(f"\n  范围模式: {start} → {end}  步长 {abs(step):.1f}°C")
                 print(f"  共生成 {len(temps)} 个温度点")
             elif len(nums) >= 2:
-                # 逐个列举模式
-                temps = sorted(nums)
+                # 逐个列举模式（保持输入顺序）
+                temps = nums
             else:
                 # 单个温度点
                 temps = nums
@@ -969,7 +950,7 @@ def input_points():
 # ============================================================
 def main():
     parser = argparse.ArgumentParser(
-        description='TTAG 复测程序 — 交互式验证 ADC→温度 拟合函数',
+        description='TTAG 复测程序 — T100-316 标签温度精度验证',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
@@ -979,8 +960,8 @@ def main():
   python ttag_verify.py --bath-port COM4
         """
     )
-    parser.add_argument('--device', type=int, default=195082,
-                        help='TTAG 标签 ID (默认 195082)')
+    parser.add_argument('--device', type=int, default=None,
+                        help='TTAG 标签 ID (不指定则交互输入)')
     parser.add_argument('--connect', default=None, metavar='IP:PORT',
                         help='Client 模式：主动连接基站')
     parser.add_argument('--port', type=int, default=20226,
@@ -988,12 +969,44 @@ def main():
     parser.add_argument('--bath-port', default='COM3',
                         help='水浴箱串口 (默认 COM3)')
     parser.add_argument('--adc-samples', type=int, default=5,
-                        help='ADC 稳定所需样本数 (默认 5)')
+                        help='稳定所需样本数 (默认 5)')
     parser.add_argument('--adc-threshold', type=int, default=5,
-                        help='ADC 峰峰值阈值 (默认 5)')
-    parser.add_argument('--bath-tolerance', type=float, default=0.1,
-                        help='水浴稳定容差 (默认 0.1)')
+                        help='峰峰值阈值 (默认 5，即 ±0.5°C)')
+    parser.add_argument('--bath-tolerance', type=float, default=0.3,
+                        help='水浴稳定容差 (默认 0.3°C)')
+    parser.add_argument('--excel', default=None, metavar='PATH',
+                        help='Excel 输出路径 (默认: 桌面/TTAG_复测数据.xlsx)')
     args = parser.parse_args()
+
+    # ---- 设备号 ----
+    if args.device:
+        device_id = args.device
+    else:
+        print()
+        print("=" * 64)
+        print("  TTAG 复测程序")
+        print("=" * 64)
+        while True:
+            try:
+                raw = input("  请输入设备号: ").strip()
+                device_id = int(raw)
+                if device_id > 0:
+                    break
+                print("  设备号必须为正整数")
+            except ValueError:
+                print("  请输入有效数字")
+            except (EOFError, KeyboardInterrupt):
+                print("\n  已取消")
+                return
+
+    # 默认 Excel 路径：OneDrive 桌面，按设备号区分
+    if args.excel:
+        excel_path = args.excel
+    else:
+        onedrive_desktop = os.path.join(os.path.expanduser('~'), 'OneDrive', '桌面')
+        if not os.path.isdir(onedrive_desktop):
+            onedrive_desktop = os.path.join(os.path.expanduser('~'), 'Desktop')
+        excel_path = os.path.join(onedrive_desktop, f'TTAG_复测数据_{device_id}.xlsx')
 
     # ---- 交互式输入温度点 ----
     points = input_points()
@@ -1004,7 +1017,7 @@ def main():
     while True:
         try:
             run_verify(
-                device_id=args.device,
+                device_id=device_id,
                 points=points,
                 connect_to=args.connect,
                 port=args.port,
@@ -1012,6 +1025,7 @@ def main():
                 adc_samples=args.adc_samples,
                 adc_threshold=args.adc_threshold,
                 bath_tolerance=args.bath_tolerance,
+                excel_path=excel_path,
             )
         except Exception as e:
             print(f"\n\n  ❌ 程序异常退出: {e}")
@@ -1041,4 +1055,13 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except BaseException as e:
+        print(f"\n\n  ❌ 未捕获异常: {e}")
+        import traceback
+        traceback.print_exc()
+        try:
+            input("\n  按 Enter 退出...")
+        except Exception:
+            pass
