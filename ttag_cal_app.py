@@ -1488,15 +1488,17 @@ class MainWindow(tk.Tk):
 
         id_var = tk.StringVar(value=str(did))
         proto_var = tk.StringVar(value=proto)
-        step_var = tk.StringVar(value='0' if step == 0 else str(step))
+        step_labels = {0: '全测', 5: '每5°C', 10: '每10°C'}
+        step_var = tk.StringVar(value=step_labels.get(step, '全测'))
 
         ttk.Label(row_frame, text=f'#{len(self.device_rows) + 1}', width=3).pack(side='left')
         ttk.Entry(row_frame, textvariable=id_var, width=8).pack(side='left', padx=3)
         ttk.Combobox(row_frame, textvariable=proto_var, values=['new_direct', 'old_adc'],
                      width=12, state='readonly').pack(side='left', padx=3)
         ttk.Label(row_frame, text='间隔:').pack(side='left')
-        step_cb = ttk.Combobox(row_frame, textvariable=step_var, values=['0', '5', '10'],
-                               width=6, state='readonly')
+        step_cb = ttk.Combobox(row_frame, textvariable=step_var,
+                               values=['全测', '每5°C', '每10°C'],
+                               width=8, state='readonly')
         step_cb.pack(side='left', padx=3)
         ttk.Label(row_frame, text='°C').pack(side='left')
 
@@ -1770,10 +1772,9 @@ class MainWindow(tk.Tk):
                 messagebox.showwarning('Invalid', f'Device ID must be numeric: {row["id_var"].get()}')
                 return
             proto = row['proto_var'].get()
-            try:
-                step = int(float(row['step_var'].get()))
-            except ValueError:
-                step = 0
+            step_str = row['step_var'].get()
+            step_map = {'全测': 0, '每5°C': 5, '每10°C': 10}
+            step = step_map.get(step_str, 0)
             devices.append((did, proto, step))
         if not devices:
             messagebox.showwarning('无设备', '请至少添加一个设备')
