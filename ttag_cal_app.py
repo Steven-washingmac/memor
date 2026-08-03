@@ -2319,7 +2319,7 @@ class MainWindow(tk.Tk):
             self._table_trees = {}
 
         # Create tab if needed
-        tab_names = [self.data_notebook.tab(i, 'text') for i in range(self.data_notebook.tabs())]
+        tab_names = [self.data_notebook.tab(tid, 'text') for tid in self.data_notebook.tabs()]
         if did not in tab_names:
             if '无数据' in tab_names:
                 idx = tab_names.index('无数据')
