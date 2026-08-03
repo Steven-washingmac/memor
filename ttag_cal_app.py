@@ -2262,6 +2262,7 @@ class MainWindow(tk.Tk):
         elif msg_type == 'complete':
             self._on_verify_complete(data)
         elif msg_type == 'result':
+            print(f'[DEBUG] _handle_msg result: did={data.get("did")}, target={data.get("target")}')
             self._add_table_row(data)
         elif msg_type == 'error':
             # 线程报错：状态栏 + 弹窗
@@ -2337,6 +2338,7 @@ class MainWindow(tk.Tk):
 
     def _add_table_row(self, r):
         """实时插入一行验证结果到对应设备的 Treeview 表格标签页"""
+        print(f'[DEBUG] _add_table_row called: did={r.get("did")}, target={r.get("target")}')
         did = str(r['did'])
         if not hasattr(self, '_table_trees'):
             self._table_trees = {}
