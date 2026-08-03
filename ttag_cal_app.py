@@ -1435,6 +1435,20 @@ class MainWindow(tk.Tk):
                              command=lambda t=temps: self._preset_temps(t))
             btn.pack(side='left', padx=2)
 
+        # Range input row
+        range_row = ttk.Frame(parent)
+        range_row.pack(fill='x', pady=4)
+        ttk.Label(range_row, text='起始:').pack(side='left')
+        self.verify_start_var = tk.StringVar(value='5')
+        ttk.Entry(range_row, textvariable=self.verify_start_var, width=5).pack(side='left', padx=(2, 8))
+        ttk.Label(range_row, text='→ 结束:').pack(side='left')
+        self.verify_end_var = tk.StringVar(value='90')
+        ttk.Entry(range_row, textvariable=self.verify_end_var, width=5).pack(side='left', padx=(2, 8))
+        ttk.Label(range_row, text='步长:').pack(side='left')
+        self.verify_step_var = tk.StringVar(value='5')
+        ttk.Entry(range_row, textvariable=self.verify_step_var, width=4).pack(side='left', padx=(2, 8))
+        ttk.Button(range_row, text='生成', command=self._generate_range).pack(side='left', padx=4)
+
         # Temp text area
         ttk.Label(parent, text='温度点 (逗号/空格分隔):',
                   font=('', 9)).pack(anchor='w', pady=(6, 2))
@@ -1451,15 +1465,15 @@ class MainWindow(tk.Tk):
         param_row = ttk.Frame(parent)
         param_row.pack(fill='x', pady=6)
 
-        ttk.Label(param_row, text='Tol:').pack(side='left')
+        ttk.Label(param_row, text='容差±:').pack(side='left')
         self.verify_tol_var = tk.StringVar(value='0.3')
         ttk.Entry(param_row, textvariable=self.verify_tol_var, width=5).pack(side='left', padx=(2, 12))
 
-        ttk.Label(param_row, text='Samples:').pack(side='left')
+        ttk.Label(param_row, text='样本数:').pack(side='left')
         self.verify_samples_var = tk.StringVar(value='5')
         ttk.Entry(param_row, textvariable=self.verify_samples_var, width=4).pack(side='left', padx=(2, 12))
 
-        ttk.Label(param_row, text='Threshold:').pack(side='left')
+        ttk.Label(param_row, text='阈值≤:').pack(side='left')
         self.verify_thresh_var = tk.StringVar(value='5')
         ttk.Entry(param_row, textvariable=self.verify_thresh_var, width=4).pack(side='left', padx=2)
 
@@ -1500,6 +1514,34 @@ class MainWindow(tk.Tk):
                     if txt and txt.startswith('#'):
                         child.config(text=f'#{i}')
                         break
+
+    def _generate_range(self):
+        """从起始/结束/步长生成温度点并填入文本框"""
+        try:
+            start = float(self.verify_start_var.get())
+            end = float(self.verify_end_var.get())
+            step = float(self.verify_step_var.get())
+        except ValueError:
+            messagebox.showwarning('无效', '起始/结束/步长必须为数字')
+            return
+        if step == 0:
+            messagebox.showwarning('无效', '步长不能为0')
+            return
+        temps = []
+        t = start
+        if start <= end:
+            while t <= end + step / 2:
+                temps.append(round(t, 1))
+                t += step
+        else:
+            while t >= end - step / 2:
+                temps.append(round(t, 1))
+                t -= step
+        temps.sort()
+        text = ', '.join(str(t) for t in temps)
+        self.temp_text.delete('1.0', 'end')
+        self.temp_text.insert('1.0', text)
+        self._update_temp_preview()
 
     def _preset_temps(self, temps):
         text = ', '.join(str(t) for t in temps)
