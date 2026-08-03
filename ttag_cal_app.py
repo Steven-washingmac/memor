@@ -1140,9 +1140,11 @@ class VerifyThread(threading.Thread):
                 last_hits = {did: receiver.get_state(did).get('hits', 0) for did, _ in active}
 
                 t2 = time.time()
+                pv_samples = []  # 采集期间的水浴温度样本
                 while time.time() - t2 < 240:
                     if self.stopped.is_set():
                         break
+                    pv_cur = wb.get_temperature()
                     for did, _ in active:
                         st = receiver.get_state(did)
                         cur = st.get('hits', 0)
@@ -1150,16 +1152,22 @@ class VerifyThread(threading.Thread):
                         if v is not None and cur != last_hits[did]:
                             detectors[did].feed(v)
                             last_hits[did] = cur
+                            pv_samples.append(pv_cur)  # 每次标签数据更新时记录水浴温度
                     all_stable = all(detectors[did].check()[0] for did, _ in active)
                     if all_stable:
                         break
                     self._push('status', {
                         'phase': 'adc', 'target': target,
                         'done': i, 'total': total, 'elapsed': time.time() - t0,
-                        'disp_i': i + 1, 'pv': wb.get_temperature(),
+                        'disp_i': i + 1, 'pv': pv_cur,
                         'devices': {did: detectors[did].check() for did, _ in active},
                     })
                     time.sleep(0.3)
+
+                # 水浴实际温度取采集期间的均值
+                pv_now = sum(pv_samples) / len(pv_samples) if pv_samples else wb.get_temperature()
+                if pv_now is None:
+                    pv_now = target
 
                 # Record results
                 for did, proto in active:
@@ -1168,7 +1176,6 @@ class VerifyThread(threading.Thread):
                     adc_mean = mean if mean is not None else (st.get('adc') or 0)
                     tag_temp = st.get('temperature')
                     t_calc = calc_temperature(proto, adc_mean, tag_temp)
-                    pv_now = wb.get_temperature()
                     error = t_calc - pv_now if (t_calc is not None and pv_now is not None) else None
                     passed = abs(error) <= 1.0 if error is not None else False
                     result = {
