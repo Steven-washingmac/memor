@@ -10,6 +10,12 @@ import sys, os, time, struct, socket, threading, queue, csv, json, configparser
 from datetime import datetime
 from collections import deque
 
+# ---- 双设备复测模块 ----
+try:
+    from ttag_dual_verify import DEVICE_TABLE, COEFFS
+except ImportError:
+    DEVICE_TABLE = {}
+
 # ---- 切换工作目录到脚本所在位置 ----
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, '.')
@@ -1150,8 +1156,71 @@ class MainWindow(tk.Tk):
         # Verify settings (new, hidden by default)
         self.verify_frame = ttk.LabelFrame(parent, text='Verify — Devices & Points', padding=8)
         # Don't pack it yet — hidden initially
-        ttk.Label(self.verify_frame, text='Add devices and set temperature points to start verification.',
-                  foreground='gray').pack(pady=20)
+        self._build_verify_panel()
+
+    def _build_verify_panel(self):
+        parent = self.verify_frame
+
+        # Device list header
+        hdr = ttk.Frame(parent)
+        hdr.pack(fill='x')
+        ttk.Label(hdr, text='Devices:', font=('', 10, 'bold')).pack(side='left')
+        ttk.Button(hdr, text='+ Add Device', command=self._add_device_row).pack(side='right')
+
+        # Scrollable device list area
+        self.device_canvas = tk.Canvas(parent, height=120, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(parent, orient='vertical', command=self.device_canvas.yview)
+        self.device_inner = ttk.Frame(self.device_canvas)
+        self.device_inner.bind('<Configure>',
+            lambda e: self.device_canvas.configure(scrollregion=self.device_canvas.bbox('all')))
+        self.device_canvas.create_window((0, 0), window=self.device_inner, anchor='nw')
+        self.device_canvas.configure(yscrollcommand=scrollbar.set)
+
+        self.device_canvas.pack(fill='x', side='left', expand=True)
+        scrollbar.pack(side='right', fill='y')
+
+        self.device_rows = []
+        # Preload from DEVICE_TABLE
+        for did, cfg in sorted(DEVICE_TABLE.items()):
+            self._add_device_row(did, cfg['protocol'], cfg.get('step', 0))
+
+    def _add_device_row(self, did='', proto='new_direct', step=0):
+        row_frame = ttk.Frame(self.device_inner)
+        row_frame.pack(fill='x', pady=2)
+
+        id_var = tk.StringVar(value=str(did))
+        proto_var = tk.StringVar(value=proto)
+        step_var = tk.StringVar(value='0' if step == 0 else str(step))
+
+        ttk.Label(row_frame, text=f'#{len(self.device_rows) + 1}', width=3).pack(side='left')
+        ttk.Entry(row_frame, textvariable=id_var, width=8).pack(side='left', padx=3)
+        ttk.Combobox(row_frame, textvariable=proto_var, values=['new_direct', 'old_adc'],
+                     width=12, state='readonly').pack(side='left', padx=3)
+        ttk.Label(row_frame, text='Every:').pack(side='left')
+        step_cb = ttk.Combobox(row_frame, textvariable=step_var, values=['0', '5', '10'],
+                               width=6)
+        step_cb.pack(side='left', padx=3)
+        ttk.Label(row_frame, text='°C').pack(side='left')
+
+        def remove():
+            row_frame.destroy()
+            self.device_rows.remove(row_data)
+            self._renumber_devices()
+
+        ttk.Button(row_frame, text='X', width=2, command=remove).pack(side='right', padx=3)
+
+        row_data = {'frame': row_frame, 'id_var': id_var,
+                    'proto_var': proto_var, 'step_var': step_var}
+        self.device_rows.append(row_data)
+
+    def _renumber_devices(self):
+        for i, row in enumerate(self.device_rows, 1):
+            for child in row['frame'].winfo_children():
+                if isinstance(child, ttk.Label):
+                    txt = child.cget('text')
+                    if txt and txt.startswith('#'):
+                        child.config(text=f'#{i}')
+                        break
 
     def _build_controls(self, parent):
         """控制按钮 + 进度/状态"""
