@@ -1749,10 +1749,15 @@ class MainWindow(tk.Tk):
     # 标定控制
     # ========================================
     def _start(self):
-        if self.mode_var.get() == 'verify':
-            self._start_verify()
-        else:
-            self._start_cal()
+        try:
+            if self.mode_var.get() == 'verify':
+                self._start_verify()
+            else:
+                self._start_cal()
+        except Exception as e:
+            messagebox.showerror('启动失败', str(e))
+            import traceback
+            traceback.print_exc()
 
     def _start_verify(self):
         """解析设备列表和温度点 → 构建参数 → 启动 VerifyThread"""
@@ -1789,6 +1794,7 @@ class MainWindow(tk.Tk):
         }
         self.verify_thread = VerifyThread(params, self.status_queue)
         self.verify_thread.start()
+        self._set_status('验证已启动，正在连接水浴和基站...')
         self.start_btn.config(state='disabled')
         self.pause_btn.config(state='normal')
         self.stop_btn.config(state='normal')
@@ -2227,10 +2233,11 @@ class MainWindow(tk.Tk):
         elif msg_type == 'result':
             self._add_table_row(data)
         elif msg_type == 'error':
-            # CalibrationThread sends plain string, VerifyThread sends {'text': ...}
+            # 线程报错：状态栏 + 弹窗
             if isinstance(data, dict) and 'text' in data:
                 data = data['text']
             self._log_status(f'错误: {data}')
+            messagebox.showerror('运行错误', str(data))
             messagebox.showerror('标定出错', str(data))
             self._set_running_state(False)
 
