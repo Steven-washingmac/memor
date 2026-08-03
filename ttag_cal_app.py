@@ -1611,6 +1611,10 @@ class MainWindow(tk.Tk):
         table_label = ttk.Label(self.bottom_frame, text='Data Table', font=('', 10, 'bold'))
         table_label.pack(anchor='w', padx=4, pady=(4, 0))
 
+        btn_row = ttk.Frame(self.bottom_frame)
+        btn_row.pack(fill='x', padx=4, pady=(0, 2))
+        ttk.Button(btn_row, text='Load Excel...', command=self._load_excel_data).pack(side='left')
+
         self.data_notebook = ttk.Notebook(self.bottom_frame)
         self.data_notebook.pack(fill='both', expand=True, padx=4, pady=4)
 
@@ -2147,7 +2151,10 @@ class MainWindow(tk.Tk):
             data = {k: v for k, v in msg.items() if k != 'type'}
 
         if msg_type == 'status':
-            self._update_status(data)
+            if self.verify_thread and self.verify_thread.is_alive():
+                self._update_verify_status(data)
+            else:
+                self._update_status(data)
         elif msg_type == 'fit_update':
             self._update_fit_panel(data)
         elif msg_type == 'log':
@@ -2155,13 +2162,12 @@ class MainWindow(tk.Tk):
             if isinstance(data, dict) and 'text' in data:
                 data = data['text']
             self._log_status(data)
-        elif msg_type == 'done' or msg_type == 'complete':
+        elif msg_type == 'done':
             self._on_done(data)
+        elif msg_type == 'complete':
+            self._on_verify_complete(data)
         elif msg_type == 'result':
-            # VerifyThread per-device result — log briefly
-            did = data.get('did', '?')
-            passed = 'PASS' if data.get('passed') else 'FAIL'
-            self._log_status(f'[{did}] {data.get("target","?")}C: {passed}')
+            self._add_table_row(data)
         elif msg_type == 'error':
             # CalibrationThread sends plain string, VerifyThread sends {'text': ...}
             if isinstance(data, dict) and 'text' in data:
@@ -2207,6 +2213,132 @@ class MainWindow(tk.Tk):
         lines.append(f'阶段: {phase}{cool_hint}{nudge_hint}  目标={s["target"]}°C')
 
         self._set_status('\n'.join(lines))
+
+    def _update_verify_status(self, s):
+        """Update status display for verify mode (multi-device)."""
+        done, total = s.get('done', 0), s.get('total', 1)
+        if total > 0:
+            self.progress_var.set(done * 100 / total)
+            self.progress_label.config(text=f'Point {s.get("disp_i", "?")}/{total}')
+        elapsed = s.get('elapsed', 0)
+        eta = (elapsed / max(done, 1) * (total - done)) if done > 0 else 0
+        self.time_label.config(text=f'{elapsed/60:.0f}min | ETA {eta/60:.0f}min')
+
+        lines = []
+        pv = s.get('pv')
+        target = s.get('target')
+        pv_s = f'{pv:.4f}' if pv is not None else '---'
+        lines.append(f'Bath: PV={pv_s}C  Target={target}C')
+
+        devices = s.get('devices', {})
+        if devices:
+            for did, (stable, mean, rng, n, _) in devices.items():
+                st_str = 'STABLE' if stable else 'collecting'
+                mean_v = mean or 0
+                lines.append(f'  {did}: mean={mean_v:.1f} range={rng} n={n} {st_str}')
+
+        self._set_status('\n'.join(lines))
+
+    def _add_table_row(self, r):
+        """Add a live result row to the per-device data table tab."""
+        did = str(r['did'])
+        if not hasattr(self, '_table_trees'):
+            self._table_trees = {}
+
+        # Create tab if needed
+        tab_names = [self.data_notebook.tab(i, 'text') for i in range(self.data_notebook.tabs())]
+        if did not in tab_names:
+            if 'No data' in tab_names:
+                idx = tab_names.index('No data')
+                self.data_notebook.forget(idx)
+            frame = ttk.Frame(self.data_notebook)
+            self.data_notebook.add(frame, text=did)
+            tree = ttk.Treeview(frame, columns=('target', 'bath', 'raw', 'calc', 'error', 'pass_'),
+                                show='headings', height=10)
+            tree.heading('target', text='Target C'); tree.column('target', width=65)
+            tree.heading('bath', text='Bath C'); tree.column('bath', width=65)
+            tree.heading('raw', text='Raw'); tree.column('raw', width=55)
+            tree.heading('calc', text='Calc C'); tree.column('calc', width=65)
+            tree.heading('error', text='Error'); tree.column('error', width=55)
+            tree.heading('pass_', text='Pass'); tree.column('pass_', width=45)
+            scroll = ttk.Scrollbar(frame, orient='vertical', command=tree.yview)
+            tree.configure(yscrollcommand=scroll.set)
+            tree.pack(side='left', fill='both', expand=True)
+            scroll.pack(side='right', fill='y')
+            self._table_trees[did] = tree
+
+        tree = self._table_trees.get(did)
+        if tree:
+            icon = 'YES' if r.get('passed') else 'NO'
+            err_s = f'{r["error"]:+.2f}' if r.get('error') is not None else '--'
+            tree.insert('', 'end', values=(
+                r.get('target', ''),
+                f'{r["pv"]:.2f}' if r.get('pv') is not None else '--',
+                r.get('adc_mean') if r.get('adc_mean') is not None else '--',
+                f'{r["t_calc"]:.2f}' if r.get('t_calc') is not None else '--',
+                err_s, icon
+            ))
+            tree.yview_moveto(1)
+
+    def _on_verify_complete(self, msg):
+        """Handle verify completion: reset UI, show summary."""
+        self.start_btn.config(state='normal')
+        self.pause_btn.config(state='disabled')
+        self.stop_btn.config(state='disabled')
+        xlsx = msg.get('xlsx', '')
+        results = msg.get('results', {})
+        total = sum(len(v) for v in results.values())
+        self._set_status(f'Verify complete!\nResults saved to: {xlsx}')
+        messagebox.showinfo('Verify Complete',
+                            f'Verification complete!\n\n'
+                            f'{total} data points across {len(results)} devices\n'
+                            f'Excel: {xlsx}')
+
+    def _load_excel_data(self):
+        """Load historical verify Excel file into the data table tabs."""
+        path = filedialog.askopenfilename(filetypes=[('Excel files', '*.xlsx')])
+        if not path:
+            return
+        from openpyxl import load_workbook
+        wb = load_workbook(path)
+        for sname in wb.sheetnames:
+            ws = wb[sname]
+            did = sname.split()[0]  # First word is device ID
+            if not hasattr(self, '_table_trees'):
+                self._table_trees = {}
+            tree = self._table_trees.get(did)
+            if tree is None:
+                frame = ttk.Frame(self.data_notebook)
+                self.data_notebook.add(frame, text=sname)
+                tree = ttk.Treeview(frame, columns=('target', 'bath', 'raw', 'calc', 'error', 'pass_'),
+                                    show='headings', height=10)
+                tree.heading('target', text='Target C'); tree.column('target', width=65)
+                tree.heading('bath', text='Bath C'); tree.column('bath', width=65)
+                tree.heading('raw', text='Raw'); tree.column('raw', width=55)
+                tree.heading('calc', text='Calc C'); tree.column('calc', width=65)
+                tree.heading('error', text='Error'); tree.column('error', width=55)
+                tree.heading('pass_', text='Pass'); tree.column('pass_', width=45)
+                scroll = ttk.Scrollbar(frame, orient='vertical', command=tree.yview)
+                tree.configure(yscrollcommand=scroll.set)
+                tree.pack(side='left', fill='both', expand=True)
+                scroll.pack(side='right', fill='y')
+                self._table_trees[did] = tree
+            else:
+                for item in tree.get_children():
+                    tree.delete(item)
+
+            for row in ws.iter_rows(min_row=5, values_only=True):
+                if row[1] is None:
+                    continue
+                passed = row[8] == 'YES' if row[8] else False
+                tree.insert('', 'end', values=(
+                    row[1],
+                    f'{row[2]:.2f}' if row[2] is not None else '--',
+                    row[3] if row[3] is not None else '--',
+                    f'{row[6]:.2f}' if row[6] is not None else '--',
+                    f'{row[7]:+.2f}' if row[7] is not None else '--',
+                    'YES' if passed else 'NO'
+                ))
 
     def _log_status(self, text):
         self._set_status(text)
