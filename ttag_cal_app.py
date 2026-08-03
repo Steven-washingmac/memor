@@ -2207,7 +2207,11 @@ class MainWindow(tk.Tk):
         try:
             while True:
                 msg = self.status_queue.get_nowait()
-                self._handle_msg(msg)
+                try:
+                    self._handle_msg(msg)
+                except Exception:
+                    import traceback
+                    traceback.print_exc()
         except queue.Empty:
             pass
 
