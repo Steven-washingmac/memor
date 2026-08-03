@@ -296,11 +296,13 @@ def run_dual_verify(devices, points, connect_to=None, port=20226,
 
     # ---- 连接水浴 ----
     print(f"\n[1/3] 连接水浴箱 ({bath_port}) ...")
-    wb = WaterBath(bath_port)
     try:
-        wb.connect()
+        wb = WaterBath(port=bath_port)
         pv = wb.get_temperature()
-        print(f"      ✓ 已连接  PV={pv:.2f}°C" if pv is not None else f"      ✓ 已连接")
+        sv = wb.get_setpoint()
+        pv_str = f"{pv:.2f}°C" if pv is not None else "?"
+        sv_str = f"{sv:.1f}°C" if sv is not None else "?"
+        print(f"      ✓ 已连接  PV={pv_str}  SV={sv_str}")
     except Exception as e:
         print(f"      ✗ 连接失败: {e}")
         return
@@ -668,6 +670,37 @@ def run_dual_verify(devices, points, connect_to=None, port=20226,
 
             time.sleep(0.3)
 
+        # 检查是否所有设备都有数据
+        missing = []
+        for did in device_ids:
+            _, _, _, n, _ = detectors[did].check()
+            if n == 0:
+                missing.append(did)
+        if missing:
+            print(f"\n  ⚠ 设备 {', '.join(str(d) for d in missing)} 4 分钟内未收到任何数据！")
+            try:
+                ans = input(f"  继续等待？[Y=等2分钟/n=跳过此点]: ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                break
+            if ans not in ('n', 'no', '否'):
+                # 再等 2 分钟
+                extra_start = time.time()
+                while time.time() - extra_start < 120:
+                    for did in missing:
+                        st = receiver.get_state(did)
+                        cur_hits = st.get('hits', 0)
+                        adc_v = st.get('adc')
+                        if adc_v is not None and cur_hits != last_hits.get(did, 0):
+                            detectors[did].feed(adc_v)
+                            last_hits[did] = cur_hits
+                    _, _, _, n_new, _ = detectors[missing[0]].check()
+                    if n_new > 0 and len(missing) == 1:
+                        break
+                    if len(missing) > 1 and all(detectors[d].check()[3] > 0 for d in missing):
+                        break
+                    time.sleep(0.5)
+
         # 收集结果
         for did in device_ids:
             stable, mean, rng, n, _ = detectors[did].check()
@@ -707,6 +740,21 @@ def run_dual_verify(devices, points, connect_to=None, port=20226,
                 xl_sheets[did] = (ws, nr + 1)
             except Exception as e:
                 print(f"  ⚠ {did} Excel 写入失败: {e}")
+                # CSV 后备保存
+                csv_path = xlsx_path.replace('.xlsx', f'_{did}_backup.csv')
+                try:
+                    import csv
+                    is_new = not os.path.exists(csv_path)
+                    with open(csv_path, 'a', newline='', encoding='utf-8-sig') as cf:
+                        wf = csv.writer(cf)
+                        if is_new:
+                            wf.writerow(['序号','目标°C','水浴°C','原始值','波动','采样数','计算°C','误差°C','通过','时间'])
+                        wf.writerow([len(all_results[did]), result['target'], result['pv'],
+                                     result['adc_mean'], result['adc_range'], result['adc_n'],
+                                     result['t_calc'], result['error'], 'YES' if result['passed'] else 'NO', now_str])
+                    print(f"         → 已写入 CSV 备份: {os.path.basename(csv_path)}")
+                except Exception as ce:
+                    print(f"         → CSV 备份也失败: {ce}")
 
         # 单点结果
         print(f"\n  {'─'*50}")

@@ -517,13 +517,13 @@ def run_verify(device_id, points, connect_to=None, port=20226,
 
         # ---- Step 1: 设置水浴 ----
         print(f"  [水浴] 设定 SV={target}°C ...")
-        for attempt in range(5):
+        for attempt in range(3):
             ok = wb.set_temperature(target)
             if ok:
                 break
-            print(f"         重试 {attempt + 2}/5...")
-            time.sleep(1)
-        time.sleep(1)
+            print(f"         重试 {attempt + 2}/3...")
+            time.sleep(0.3)
+        time.sleep(0.5)
         sv_check = wb.get_setpoint()
         print(f"  [水浴] SV={sv_check}°C")
 
