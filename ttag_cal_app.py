@@ -1523,7 +1523,7 @@ class MainWindow(tk.Tk):
                         break
 
     def _generate_range(self):
-        """从 起始/结束/步长 生成温度点列表并填入文本框（支持降序范围）"""
+        """从 起始/结束/步长 生成温度点列表并填入文本框（保持输入方向）"""
         try:
             start = float(self.verify_start_var.get())
             end = float(self.verify_end_var.get())
@@ -1544,7 +1544,6 @@ class MainWindow(tk.Tk):
             while t >= end - step / 2:
                 temps.append(round(t, 1))
                 t -= step
-        temps.sort()
         text = ', '.join(str(t) for t in temps)
         self.temp_text.delete('1.0', 'end')
         self.temp_text.insert('1.0', text)
@@ -1573,11 +1572,11 @@ class MainWindow(tk.Tk):
         )
 
     def _get_temp_points(self):
-        """Parse temp_text and return sorted list of floats, or None if invalid."""
+        """从文本框解析温度点列表（保持输入顺序），失败返回 None"""
         raw = self.temp_text.get('1.0', 'end').strip()
         parts = raw.replace(',', ' ').split()
         try:
-            return sorted([float(p) for p in parts])
+            return [float(p) for p in parts]
         except ValueError:
             return None
 
