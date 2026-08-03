@@ -1569,6 +1569,15 @@ class MainWindow(tk.Tk):
         self.status_text.pack(fill='x')
 
     def _on_mode_change(self):
+        running = (self.cal_thread and self.cal_thread.is_alive()) or \
+                  (hasattr(self, 'verify_thread') and self.verify_thread and self.verify_thread.is_alive())
+        if running:
+            messagebox.showwarning('Running', 'Stop the current run before switching modes.')
+            # Revert radio button
+            current = 'calibrate' if self.mode_var.get() == 'verify' else 'verify'
+            self.mode_var.set(current)
+            return
+
         mode = self.mode_var.get()
         if mode == 'calibrate':
             self.verify_frame.pack_forget()
@@ -2495,11 +2504,22 @@ class MainWindow(tk.Tk):
                                 f'请在右侧面板选择拟合模型并导出。')
 
     def _on_close(self):
+        running = False
         if self.cal_thread and self.cal_thread.is_alive():
-            if messagebox.askyesno('确认退出', '标定正在运行中，确定退出?\n已记录的数据将保留。'):
-                self.cal_thread.stop()
+            running = True
+        if hasattr(self, 'verify_thread') and self.verify_thread and self.verify_thread.is_alive():
+            running = True
+        if running:
+            if messagebox.askyesno('Confirm', 'A verification/calibration is running. Stop and exit?'):
+                if self.cal_thread:
+                    self.cal_thread.stopped.set()
+                if self.verify_thread:
+                    self.verify_thread.stopped.set()
+                    self.verify_thread.paused.clear()
                 time.sleep(0.5)
-        self.destroy()
+                self.destroy()
+        else:
+            self.destroy()
 
 
 # ============================================================
