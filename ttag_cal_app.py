@@ -1436,7 +1436,7 @@ class MainWindow(tk.Tk):
             btn.pack(side='left', padx=2)
 
         # Temp text area
-        ttk.Label(parent, text='Temperature points (comma/space separated):',
+        ttk.Label(parent, text='温度点 (逗号/空格分隔):',
                   font=('', 9)).pack(anchor='w', pady=(6, 2))
         self.temp_text = tk.Text(parent, height=3, width=70, font=('Consolas', 10))
         self.temp_text.pack(fill='x')
@@ -1475,7 +1475,7 @@ class MainWindow(tk.Tk):
         ttk.Entry(row_frame, textvariable=id_var, width=8).pack(side='left', padx=3)
         ttk.Combobox(row_frame, textvariable=proto_var, values=['new_direct', 'old_adc'],
                      width=12, state='readonly').pack(side='left', padx=3)
-        ttk.Label(row_frame, text='Every:').pack(side='left')
+        ttk.Label(row_frame, text='间隔:').pack(side='left')
         step_cb = ttk.Combobox(row_frame, textvariable=step_var, values=['0', '5', '10'],
                                width=6)
         step_cb.pack(side='left', padx=3)
@@ -1513,14 +1513,14 @@ class MainWindow(tk.Tk):
         try:
             temps = [float(p) for p in parts]
         except ValueError:
-            self.temp_preview_var.set('Invalid: non-numeric values found')
+            self.temp_preview_var.set('无效: 包含非数字')
             return
         if not temps:
             self.temp_preview_var.set('0 points')
             return
         temps.sort()
         self.temp_preview_var.set(
-            f'{len(temps)} points | {temps[0]:.1f} to {temps[-1]:.1f} deg C'
+            f'{len(temps)} 个点 | {temps[0]:.1f} ~ {temps[-1]:.1f} °C'
         )
 
     def _get_temp_points(self):
@@ -1725,7 +1725,7 @@ class MainWindow(tk.Tk):
         # Parse temps
         temps = self._get_temp_points()
         if temps is None or not temps:
-            messagebox.showwarning('Invalid', 'Temperature points contain errors or are empty.')
+            messagebox.showwarning('无效', '温度点输入有误或为空')
             return
 
         params = {
