@@ -1073,7 +1073,8 @@ class VerifyThread(threading.Thread):
             if not os.path.isdir(onedrive):
                 onedrive = os.path.join(os.path.expanduser('~'), 'Desktop')
             dev_names = '_'.join(str(d) for d in sorted(device_ids))
-            xlsx_path = os.path.join(onedrive, f'TTAG_dual_{dev_names}.xlsx')
+            ts = datetime.now().strftime('%m%d_%H%M')
+            xlsx_path = os.path.join(onedrive, f'TTAG_dual_{dev_names}_{ts}.xlsx')
             os.makedirs(os.path.dirname(xlsx_path), exist_ok=True)
             self._push('log', {'text': f'Excel: {os.path.basename(xlsx_path)}'})
 
