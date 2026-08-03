@@ -2207,10 +2207,7 @@ class MainWindow(tk.Tk):
         try:
             while True:
                 msg = self.status_queue.get_nowait()
-                try:
-                    self._handle_msg(msg)
-                except Exception:
-                    pass  # 单个消息处理失败不影响轮询
+                self._handle_msg(msg)
         except queue.Empty:
             pass
 
