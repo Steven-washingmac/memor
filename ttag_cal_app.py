@@ -1016,6 +1016,7 @@ class MainWindow(tk.Tk):
         self.cal_thread = None
         self.status_queue = queue.Queue(maxsize=100)
         self.fit_results = []
+        self.mode_var = tk.StringVar(value='calibrate')
 
         self._build_ui()
         self._load_config()
@@ -1041,6 +1042,18 @@ class MainWindow(tk.Tk):
 
         main_frame = self.top_frame  # alias for existing code to work
 
+        # Mode toggle bar
+        mode_bar = ttk.Frame(main_frame)
+        mode_bar.pack(fill='x', pady=(0, 6))
+
+        ttk.Label(mode_bar, text='Mode:', font=('', 10)).pack(side='left', padx=(0, 8))
+
+        ttk.Radiobutton(mode_bar, text='Calibrate (Single)', variable=self.mode_var,
+                        value='calibrate', command=self._on_mode_change).pack(side='left', padx=3)
+
+        ttk.Radiobutton(mode_bar, text='Verify (Multi-Device)', variable=self.mode_var,
+                        value='verify', command=self._on_mode_change).pack(side='left', padx=3)
+
         # 顶部: 设置区
         self._build_settings(main_frame)
 
@@ -1063,11 +1076,11 @@ class MainWindow(tk.Tk):
 
     def _build_settings(self, parent):
         """构建设置区域"""
-        frame = ttk.LabelFrame(parent, text='连接与参数', padding=8)
-        frame.pack(fill='x')
+        self.cal_frame = ttk.LabelFrame(parent, text='连接与参数', padding=8)
+        self.cal_frame.pack(fill='x')
 
         # 第一行: 连接设置
-        row1 = ttk.Frame(frame)
+        row1 = ttk.Frame(self.cal_frame)
         row1.pack(fill='x', pady=2)
 
         ttk.Label(row1, text='设备ID:').pack(side='left')
@@ -1101,7 +1114,7 @@ class MainWindow(tk.Tk):
         ttk.Label(row1, textvariable=self.bath_status_var, foreground='gray').pack(side='left', padx=(10, 0))
 
         # 第二行: 标定参数
-        row2 = ttk.Frame(frame)
+        row2 = ttk.Frame(self.cal_frame)
         row2.pack(fill='x', pady=(6, 2))
 
         ttk.Label(row2, text='起始:').pack(side='left')
@@ -1134,9 +1147,16 @@ class MainWindow(tk.Tk):
         self.save_config_btn = ttk.Button(row2, text='保存设置', command=self._save_config)
         self.save_config_btn.pack(side='right', padx=(10, 0))
 
+        # Verify settings (new, hidden by default)
+        self.verify_frame = ttk.LabelFrame(parent, text='Verify — Devices & Points', padding=8)
+        # Don't pack it yet — hidden initially
+        ttk.Label(self.verify_frame, text='Add devices and set temperature points to start verification.',
+                  foreground='gray').pack(pady=20)
+
     def _build_controls(self, parent):
         """控制按钮 + 进度/状态"""
         ctrl_frame = ttk.Frame(parent)
+        self.ctrl_frame = ctrl_frame
         ctrl_frame.pack(fill='x', pady=(8, 4))
 
         self.start_btn = ttk.Button(ctrl_frame, text='▶ 开始标定', command=self._start_cal)
@@ -1168,6 +1188,18 @@ class MainWindow(tk.Tk):
         self.status_text = tk.Text(status_frame, height=3, width=80, state='disabled',
                                     font=('Consolas', 10), bg='#1e1e1e', fg='#d4d4d4')
         self.status_text.pack(fill='x')
+
+    def _on_mode_change(self):
+        mode = self.mode_var.get()
+        if mode == 'calibrate':
+            self.verify_frame.pack_forget()
+            self.cal_frame.pack(fill='x', before=self.ctrl_frame)
+            self.start_btn.config(text='Start Calibrate')
+            self.data_notebook.tab(0, text='No data')
+        else:
+            self.cal_frame.pack_forget()
+            self.verify_frame.pack(fill='x', before=self.ctrl_frame)
+            self.start_btn.config(text='Start Verify')
 
     def _build_fit_panel(self, parent):
         """拟合结果面板"""
