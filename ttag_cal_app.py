@@ -1295,6 +1295,10 @@ class MainWindow(tk.Tk):
         self._build_ui()
         self._load_config()
 
+        # 设置初始分隔线位置（上 65% 下 35%）
+        self.update_idletasks()
+        self.paned.sash_place(0, 0, int(self.winfo_height() * 0.65))
+
         # 每 200ms 从后台线程拉状态
         self._poll_status()
 
@@ -1312,7 +1316,7 @@ class MainWindow(tk.Tk):
         self.bottom_frame = ttk.Frame(self.paned)
 
         self.paned.add(self.top_frame, minsize=200, stretch='always')
-        self.paned.add(self.bottom_frame, minsize=100, stretch='always')
+        self.paned.add(self.bottom_frame, minsize=150, stretch='always')
 
         main_frame = self.top_frame  # alias for existing code to work
 
@@ -2268,7 +2272,6 @@ class MainWindow(tk.Tk):
         elif msg_type == 'complete':
             self._on_verify_complete(data)
         elif msg_type == 'result':
-            print(f'[DEBUG] _handle_msg result: did={data.get("did")}, target={data.get("target")}')
             self._add_table_row(data)
         elif msg_type == 'error':
             # 线程报错：状态栏 + 弹窗
@@ -2344,7 +2347,6 @@ class MainWindow(tk.Tk):
 
     def _add_table_row(self, r):
         """实时插入一行验证结果到对应设备的 Treeview 表格标签页"""
-        print(f'[DEBUG] _add_table_row called: did={r.get("did")}, target={r.get("target")}')
         did = str(r['did'])
         if not hasattr(self, '_table_trees'):
             self._table_trees = {}
@@ -2374,6 +2376,11 @@ class MainWindow(tk.Tk):
         tree = self._table_trees.get(did)
         if tree:
             icon = 'YES' if r.get('passed') else 'NO'
+            # Auto-select this device's tab
+            for tid in self.data_notebook.tabs():
+                if self.data_notebook.tab(tid, 'text') == did:
+                    self.data_notebook.select(tid)
+                    break
             err_s = f'{r["error"]:+.2f}' if r.get('error') is not None else '--'
             tree.insert('', 'end', values=(
                 r.get('target', ''),
