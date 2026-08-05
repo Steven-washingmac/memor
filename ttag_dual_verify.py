@@ -38,11 +38,11 @@ COEFFS = [
 # 内置设备表
 # ============================================================
 DEVICE_TABLE = {
-    195082: {'protocol': 'old_adc', 'name': '195082'},
-    192084: {'protocol': 'old_adc', 'name': '192084'},
-    192080: {'protocol': 'old_adc', 'name': '192080'},
-    201154: {'protocol': 'new_direct', 'name': '201154'},
-    207154: {'protocol': 'new_direct', 'name': '207154'},
+    195082: {'protocol': 'old_adc', 'name': '195082', 'step': 5},
+    192084: {'protocol': 'old_adc', 'name': '192084', 'step': 5},
+    192080: {'protocol': 'old_adc', 'name': '192080', 'step': 5},
+    201154: {'protocol': 'new_direct', 'name': '201154', 'step': 0},
+    207154: {'protocol': 'new_direct', 'name': '207154', 'step': 0},
 }
 
 
@@ -74,8 +74,12 @@ def parse_frame_tags(data):
                     'tag_type': tag.tag_type,
                     'temperature': tag.temperature,
                 })
-    except Exception:
-        pass
+        else:
+            # 帧无效，打印前 20 字节用于调试
+            hex_str = data[:20].hex(' ') if len(data) >= 20 else data.hex(' ')
+            print(f'[DEBUG] Invalid frame (len={len(data)}): {hex_str}')
+    except Exception as e:
+        print(f'[DEBUG] Frame parse exception: {e}')
     return tags
 
 
@@ -110,14 +114,6 @@ class MultiReceiver:
     def get_state(self, device_id):
         with self._lock:
             return dict(self._state.get(device_id, {}))
-
-    def get_all_states(self):
-        s = {}
-        with self._lock:
-            s['frame_count'] = self.frame_count
-            for did in self.device_ids:
-                s[did] = dict(self._state.get(did, {}))
-        return s
 
     def _run(self):
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -209,7 +205,10 @@ class MultiReceiver:
             frame_data = buffer[:frame_len]
             buffer = buffer[frame_len:]
             self.frame_count += 1
-            for t in parse_frame_tags(frame_data):
+            tags = parse_frame_tags(frame_data)
+            if self.frame_count <= 3:
+                print(f'[DEBUG] Frame #{self.frame_count}: {len(tags)} tags, ids={[t["tag_id"] for t in tags]}, looking for {self.device_ids}')
+            for t in tags:
                 if t['tag_id'] in self.device_ids:
                     did = t['tag_id']
                     if t['adc'] == 0xFFFF:
@@ -266,7 +265,7 @@ def progress_bar(done, total, width=30):
 # ============================================================
 # 温度计算（按协议）
 # ============================================================
-def calc_temperature(device_id, protocol, adc_mean, tag_temp):
+def calc_temperature(protocol, adc_mean, tag_temp):
     """根据协议计算温度"""
     if protocol == 'new_direct':
         if tag_temp is not None:
@@ -288,10 +287,11 @@ def run_dual_verify(devices, points, connect_to=None, port=20226,
                     bath_port='COM3', stability_samples=5, stability_threshold=5,
                     bath_tolerance=0.3, excel_path=None):
     """
-    devices: [(device_id, protocol), ...]
+    devices: [(device_id, protocol, step), ...]  step=0 means all points
     points: [(target_temp, label), ...]
     """
     device_ids = [d[0] for d in devices]
+    device_info = {d[0]: {'protocol': d[1], 'step': d[2]} for d in devices}
     total_points = len(points)
 
     # ---- 连接水浴 ----
@@ -323,7 +323,7 @@ def run_dual_verify(devices, points, connect_to=None, port=20226,
         if len(found) >= len(device_ids):
             break
     # 打印连接状态
-    for did, proto in devices:
+    for did, proto, _ in devices:
         st = receiver.get_state(did)
         if st.get('hits', 0) > 0:
             tag_t = st.get('temperature')
@@ -366,7 +366,7 @@ def run_dual_verify(devices, points, connect_to=None, port=20226,
 
         # 每设备一个 Sheet
         sheets = {}
-        for did, proto in devices:
+        for did, proto, _ in devices:
             sname = f'{did} {"ADC复测" if proto == "old_adc" else "温度复测"}'
             if sname in wb.sheetnames:
                 ws = wb[sname]
@@ -466,8 +466,18 @@ def run_dual_verify(devices, points, connect_to=None, port=20226,
         print("=" * 64)
         print(f"  TTAG 双测 | 设备 {devices_str} | 第 {disp_i}/{total_points} 点")
         print("=" * 64)
+        # 确定本轮需要采集的设备（按各自步长过滤）
+        active = []
+        for did, proto, step in devices:
+            if step == 0 or abs(target % step) < 0.01 or abs(target % step - step) < 0.01:
+                active.append((did, proto))
+        skip = [(did, proto) for did, proto, _ in devices if (did, proto) not in active]
+
         print(f"  目标温度: {target}°C  [{label}]")
         print(f"  进度: {progress_bar(done, total_points)} {done * 100 // total_points}%")
+        if skip:
+            names = ', '.join(str(d) for d, _ in skip)
+            print(f"  本轮跳过: {names}（不在测量间隔上）")
         print("-" * 64)
 
         # ==== Step 1: 设定水浴 ====
@@ -533,7 +543,7 @@ def run_dual_verify(devices, points, connect_to=None, port=20226,
                 bs = '[OK]' if (reached and d <= bath_tolerance) else '...'
                 print(f"  水浴: PV={pv:.4f}°C  d={d:.4f}°C  {bs}  输出={pwr}%")
             # 显示各设备最新数据
-            for did, proto in devices:
+            for did, proto, _ in devices:
                 st = receiver.get_state(did)
                 tag_t = st.get('temperature')
                 adc_v = st.get('adc')
@@ -590,22 +600,23 @@ def run_dual_verify(devices, points, connect_to=None, port=20226,
                 })
             continue
 
-        # ==== Step 3: 数据采集（多设备并行判稳）====
+        # ==== Step 3: 数据采集（仅本轮活跃设备）====
+        active_ids = [d[0] for d in active]
         detectors = {}
         last_hits = {}
-        for did in device_ids:
+        for did in active_ids:
             detectors[did] = StabilityDetector(stability_samples, stability_threshold)
             last_hits[did] = receiver.get_state(did).get('hits', 0)
 
         t2 = time.time()
-        adc_results = {}  # did -> {adc_mean, adc_range, adc_n, t_calc, error, passed}
+        adc_results = {}
 
         while time.time() - t2 < 240:
             pv = wb.get_temperature()
             pwr = wb.get_status()
             adc_el = time.time() - t2
 
-            for did in device_ids:
+            for did in active_ids:
                 st = receiver.get_state(did)
                 cur_hits = st.get('hits', 0)
                 adc_v = st.get('adc')
@@ -613,14 +624,14 @@ def run_dual_verify(devices, points, connect_to=None, port=20226,
                     detectors[did].feed(adc_v)
                     last_hits[did] = cur_hits
 
-            # 检查所有设备稳定状态
+            # 检查活跃设备稳定状态
             all_stable = True
-            for did in device_ids:
-                stable, mean, rng, n, _ = detectors[did].check()
+            for did in active_ids:
+                stable, _, _, n, _ = detectors[did].check()
                 if not stable:
                     all_stable = False
 
-            if all_stable and all(detectors[did].check()[3] >= stability_samples for did in device_ids):
+            if all_stable and all(detectors[did].check()[3] >= stability_samples for did in active_ids):
                 break
 
             # 显示
@@ -634,12 +645,12 @@ def run_dual_verify(devices, points, connect_to=None, port=20226,
             d = abs(pv - target) if pv is not None else 0
             pv_str = f"{pv:.4f}" if pv is not None else "?"
             print(f"  水浴: PV={pv_str}°C  d={d:.4f}°C  [OK]  加热={pwr}%")
-            for did in device_ids:
+            for did in active_ids:
                 stable, mean, rng, n, _ = detectors[did].check()
                 st = receiver.get_state(did)
                 adc_v = st.get('adc')
                 tag_t = st.get('temperature')
-                proto = dict(devices)[did]
+                proto = device_info[did]['protocol']
                 st_str = '● STABLE' if stable else '○ 采集中'
                 if adc_v is not None:
                     if proto == 'new_direct':
@@ -651,7 +662,8 @@ def run_dual_verify(devices, points, connect_to=None, port=20226,
                           f"Δ={rng}  {t_now_str}  [{adc_el:.0f}s]")
                 else:
                     print(f"  {did}: 等待数据...  [{adc_el:.0f}s]")
-            # 上一个点结果
+            for did, _ in skip:
+                print(f"  {did}: — 跳过（间隔步长限制）—")
             for did in device_ids:
                 if all_results[did]:
                     lr = all_results[did][-1]
@@ -670,9 +682,9 @@ def run_dual_verify(devices, points, connect_to=None, port=20226,
 
             time.sleep(0.3)
 
-        # 检查是否所有设备都有数据
+        # 检查活跃设备是否都有数据
         missing = []
-        for did in device_ids:
+        for did in active_ids:
             _, _, _, n, _ = detectors[did].check()
             if n == 0:
                 missing.append(did)
@@ -694,23 +706,21 @@ def run_dual_verify(devices, points, connect_to=None, port=20226,
                         if adc_v is not None and cur_hits != last_hits.get(did, 0):
                             detectors[did].feed(adc_v)
                             last_hits[did] = cur_hits
-                    _, _, _, n_new, _ = detectors[missing[0]].check()
-                    if n_new > 0 and len(missing) == 1:
-                        break
-                    if len(missing) > 1 and all(detectors[d].check()[3] > 0 for d in missing):
+                    if all(detectors[d].check()[3] > 0 for d in missing):
                         break
                     time.sleep(0.5)
 
-        # 收集结果
-        for did in device_ids:
+        # 收集活跃设备结果
+        for did in active_ids:
             stable, mean, rng, n, _ = detectors[did].check()
             st = receiver.get_state(did)
-            adc_mean = mean if mean is not None else st.get('adc', 0)
+            raw_val = st.get('adc')
+            adc_mean = mean if mean is not None else (raw_val if raw_val is not None else 0)
             adc_range = rng if rng is not None else 0
             adc_n = n
             tag_temp = st.get('temperature')
-            proto = dict(devices)[did]
-            t_calc = calc_temperature(did, proto, adc_mean, tag_temp)
+            proto = device_info[did]['protocol']
+            t_calc = calc_temperature(proto, adc_mean, tag_temp)
             pv_final = wb.get_temperature()
             pv_now = pv_final if pv_final is not None else target
             error = t_calc - pv_now if (t_calc is not None and pv_now is not None) else None
@@ -723,7 +733,7 @@ def run_dual_verify(devices, points, connect_to=None, port=20226,
         # ==== Step 4: 记录 & 写入 Excel ====
         now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
-        for did, proto in devices:
+        for did, proto in active:
             r = adc_results[did]
             result = {
                 'target': target, 'label': label,
@@ -761,7 +771,7 @@ def run_dual_verify(devices, points, connect_to=None, port=20226,
         print(f"  📊 第 {disp_i} 点结果:")
         print(f"     目标温度:  {target}°C")
         print(f"     水浴实际:  {wb.get_temperature():.2f}°C" if wb.get_temperature() is not None else f"     水浴实际:  ?°C")
-        for did, proto in devices:
+        for did, proto in active:
             r = adc_results[did]
             icon = '✅' if r['passed'] else '❌'
             if proto == 'old_adc':
@@ -784,7 +794,7 @@ def run_dual_verify(devices, points, connect_to=None, port=20226,
     print("  TTAG 双测 — 汇总")
     print(f"  设备: {devices_str} | 总耗时: {int((time.time() - t0_total) / 60)}min")
     print("=" * 64)
-    for did, proto in devices:
+    for did, proto, _ in devices:
         results = all_results[did]
         pass_count = sum(1 for r in results if r['passed'])
         fail_count = len(results) - pass_count
@@ -838,7 +848,8 @@ def input_devices():
                 print(f"  '{p}' 不是有效设备号")
                 break
             if did in DEVICE_TABLE:
-                devices.append((did, DEVICE_TABLE[did]['protocol']))
+                cfg = DEVICE_TABLE[did]
+                devices.append((did, cfg['protocol'], cfg.get('step', 0)))
             else:
                 unknown.append(did)
         else:
@@ -851,12 +862,12 @@ def input_devices():
                         try:
                             choice = input(f"  请选择 [{did}]: ").strip()
                             if choice == '1':
-                                devices.append((did, 'old_adc'))
-                                DEVICE_TABLE[did] = {'protocol': 'old_adc', 'name': str(did)}
+                                devices.append((did, 'old_adc', 5))
+                                DEVICE_TABLE[did] = {'protocol': 'old_adc', 'name': str(did), 'step': 5}
                                 break
                             elif choice == '2':
-                                devices.append((did, 'new_direct'))
-                                DEVICE_TABLE[did] = {'protocol': 'new_direct', 'name': str(did)}
+                                devices.append((did, 'new_direct', 0))
+                                DEVICE_TABLE[did] = {'protocol': 'new_direct', 'name': str(did), 'step': 0}
                                 break
                             else:
                                 print("  输入 1 或 2")
@@ -871,7 +882,7 @@ def input_devices():
 
     print()
     print(f"  设备清单（{len(devices)} 台）:")
-    for did, proto in devices:
+    for did, proto, _ in devices:
         proto_str = '旧ADC' if proto == 'old_adc' else '新温度'
         print(f"    {did} → {proto_str}")
     print()
