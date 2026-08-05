@@ -1141,7 +1141,8 @@ class VerifyThread(threading.Thread):
 
                 t2 = time.time()
                 pv_samples = []  # 采集期间的水浴温度样本
-                while time.time() - t2 < 240:
+                last_data_warn = 0  # 无数据警告计时
+                while time.time() - t2 < 600:  # 10 分钟超时（低温标签可能发数据慢）
                     if self.stopped.is_set():
                         break
                     pv_cur = wb.get_temperature()
@@ -1153,9 +1154,14 @@ class VerifyThread(threading.Thread):
                             detectors[did].feed(v)
                             last_hits[did] = cur
                             pv_samples.append(pv_cur)  # 每次标签数据更新时记录水浴温度
+                    # 检查是否有任何设备收到过数据
+                    any_data = any(detectors[did].check()[3] > 0 for did, _ in active)
                     all_stable = all(detectors[did].check()[0] for did, _ in active)
                     if all_stable:
                         break
+                    if not any_data and time.time() - t2 > 60 and time.time() - last_data_warn > 60:
+                        self._push('log', {'text': f'警告: {target}°C 已等待 {int(time.time()-t2)}s，未收到任何标签数据！检查标签和基站'})
+                        last_data_warn = time.time()
                     self._push('status', {
                         'phase': 'adc', 'target': target,
                         'done': i, 'total': total, 'elapsed': time.time() - t0,
