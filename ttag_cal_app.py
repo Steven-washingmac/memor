@@ -1753,11 +1753,11 @@ class MainWindow(tk.Tk):
 
     def _build_fit_panel(self, parent):
         """拟合结果面板"""
-        fit_frame = ttk.LabelFrame(parent, text='拟合方案', padding=6)
-        fit_frame.pack(side='right', fill='y', padx=(8, 0))
+        fit_frame = ttk.LabelFrame(parent, text='拟合方案', padding=8)
+        fit_frame.pack(side='right', fill='y', padx=(10, 0))
 
         # 可滚动框架
-        self.fit_canvas = tk.Canvas(fit_frame, width=260, highlightthickness=0)
+        self.fit_canvas = tk.Canvas(fit_frame, width=320, highlightthickness=0)
         scrollbar = ttk.Scrollbar(fit_frame, orient='vertical', command=self.fit_canvas.yview)
         self.fit_inner = ttk.Frame(self.fit_canvas)
         self.fit_inner.bind('<Configure>', lambda e: self.fit_canvas.configure(
