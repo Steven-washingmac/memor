@@ -2695,45 +2695,39 @@ class MainWindow(tk.Tk):
         self.fit_var.set('')
 
         if not fit_results:
-            ttk.Label(self.fit_inner, text='暂无拟合结果', foreground='gray').pack(pady=10)
+            ttk.Label(self.fit_inner, text='暂无拟合结果', foreground='gray', font=('Segoe UI', 11)).pack(pady=10)
             return
 
         # 标题
-        ttk.Label(self.fit_inner, text='点击选择模型:', font=('', 10, 'bold')).pack(anchor='w', pady=(0, 5))
+        ttk.Label(self.fit_inner, text='点击选择模型:', font=('Segoe UI', 13, 'bold')).pack(anchor='w', pady=(0, 8))
 
-        status_colors = {'good': 'green', 'warn': 'orange', 'bad': 'red', 'error': 'red', 'skip': 'gray'}
+        status_colors = {'good': '#27ae60', 'warn': '#e67e22', 'bad': '#e74c3c', 'error': '#e74c3c', 'skip': '#95a5a6'}
         status_icons = {'good': '✅ 优', 'warn': '⚠ 可', 'bad': '❌ 差', 'error': '❌ 错', 'skip': '— 跳过'}
 
         for i, r in enumerate(fit_results):
-            is_first_good = (i == 0 or (i > 0 and fit_results[i - 1].get('status') != 'good'
-                                        and r.get('status') == 'good'))
-            color = status_colors.get(r['status'], 'gray')
+            color = status_colors.get(r['status'], '#95a5a6')
             icon = status_icons.get(r['status'], '?')
 
             frame = ttk.Frame(self.fit_inner)
-            frame.pack(fill='x', pady=1)
+            frame.pack(fill='x', pady=2)
 
-            # 单选按钮
             rb = ttk.Radiobutton(frame, text='', variable=self.fit_var,
                                   value=r['model'], state='normal' if r['status'] not in ('error', 'skip') else 'disabled')
             rb.pack(side='left')
 
-            # 模型名 + 误差
             text = f'{r["model"]}'
             if r['max_err'] < 900:
                 text += f'  ({r["max_err"]:.3f}°C)'
-            lbl = ttk.Label(frame, text=text, foreground=color, font=('', 9))
+            lbl = ttk.Label(frame, text=text, foreground=color, font=('Segoe UI', 11))
             lbl.pack(side='left')
 
-            # 状态图标
-            ttk.Label(frame, text=f' {icon}', foreground=color, font=('', 8)).pack(side='right')
+            ttk.Label(frame, text=f' {icon}', foreground=color, font=('Segoe UI', 10)).pack(side='right')
 
-            # 警告
             if r.get('warning'):
                 warn_frame = ttk.Frame(self.fit_inner)
                 warn_frame.pack(fill='x', padx=(25, 0))
-                ttk.Label(warn_frame, text=f'⚠ {r["warning"]}', foreground='orange',
-                          font=('', 7), wraplength=220).pack(anchor='w')
+                ttk.Label(warn_frame, text=f'⚠ {r["warning"]}', foreground='#e67e22',
+                          font=('Segoe UI', 9), wraplength=280).pack(anchor='w')
 
             # 自动预选第一个 good 的
             if r['status'] == 'good' and not self.fit_var.get():
