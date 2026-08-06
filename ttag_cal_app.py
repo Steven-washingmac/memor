@@ -547,6 +547,7 @@ class CalibrationThread(threading.Thread):
         self.stopped = threading.Event()
         self.records = []
         self.fit_results = []
+        self.do_nudge = False  # 手动推一把标志
 
     def run(self):
         params = self.params
@@ -633,6 +634,18 @@ class CalibrationThread(threading.Thread):
                     if pv_first is None:
                         pv_first = pv
                         need_cool = pv > target + params['bath_tolerance']
+
+                    # manual nudge (immediate, no wait)
+                    if self.do_nudge and pv is not None:
+                        self.do_nudge = False
+                        if not need_cool:
+                            nudge_sv = max(-30, min(100, target + 2.0))
+                        else:
+                            nudge_sv = max(-20, min(100, target - 2.0))
+                        wb.set_temperature(nudge_sv)
+                        nudge_t = time.time()
+                        self._push('log', f'手动推一把: SV→{nudge_sv}°C')
+                        last_pwr_zero = 0
 
                     # nudge logic
                     if pv is not None and nudge_sv is None and time.time() - t1 > 20:
@@ -1788,6 +1801,9 @@ class MainWindow(tk.Tk):
         self.stop_btn = ttk.Button(ctrl_frame, text='■ 停止', command=self._stop, state='disabled')
         self.stop_btn.pack(side='left', padx=(0, 5))
 
+        self.nudge_btn = ttk.Button(ctrl_frame, text='⚡ 推一把', command=self._manual_nudge, state='disabled')
+        self.nudge_btn.pack(side='left', padx=(0, 5))
+
         self.resume_btn = ttk.Button(ctrl_frame, text='📂 续跑...', command=self._resume_cal)
         self.resume_btn.pack(side='left', padx=(0, 15))
 
@@ -2019,6 +2035,14 @@ class MainWindow(tk.Tk):
             self.verify_thread.paused.clear()
         else:
             self._stop_cal()
+
+    def _manual_nudge(self):
+        """手动推一把：当前目标 ±2°C"""
+        thread = self.verify_thread if self.mode_var.get() == 'verify' and self.verify_thread else self.cal_thread
+        if not thread or not thread.is_alive():
+            return
+        thread.do_nudge = True
+        self._set_status('⚡ 手动推一把...')
 
     def _get_params(self):
         """从 UI 收集所有参数"""
@@ -2396,12 +2420,14 @@ class MainWindow(tk.Tk):
             self.resume_btn.config(state='disabled')
             self.pause_btn.config(state='normal', text='⏸ 暂停')
             self.stop_btn.config(state='normal')
+            self.nudge_btn.config(state='normal')
             self.bath_status_var.set('运行中...')
         else:
             self.start_btn.config(state='normal')
             self.resume_btn.config(state='normal')
             self.pause_btn.config(state='disabled', text='⏸ 暂停')
             self.stop_btn.config(state='disabled')
+            self.nudge_btn.config(state='disabled')
             self.bath_status_var.set('已停止')
 
     # ========================================
