@@ -1342,7 +1342,7 @@ class MainWindow(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title('TTAG 温度标签标定系统')
-        self.geometry('1100x750')
+        self.geometry('1280x780')
         try:
             ico = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ttag_icon.ico')
             if os.path.exists(ico):
@@ -1461,8 +1461,16 @@ class MainWindow(tk.Tk):
         # 中部: 控制按钮 + 状态
         self._build_controls(main_frame)
 
-        # 底部: 拟合方案 (全宽)
-        self._build_fit_panel(main_frame)
+        # 底部: 曲线 + 拟合面板
+        bottom = ttk.Frame(main_frame)
+        bottom.pack(fill='both', expand=True, pady=(8, 0))
+
+        # 左下: 曲线
+        self.curve = CurveCanvas(bottom, width=400, height=280)
+        self.curve.pack(side='left', fill='both', expand=True)
+
+        # 右下: 拟合面板
+        self._build_fit_panel(bottom)
 
         # Build data table in bottom frame
         self._build_data_table()
@@ -1834,7 +1842,7 @@ class MainWindow(tk.Tk):
     def _build_fit_panel(self, parent):
         """拟合结果面板 (全宽)"""
         fit_frame = ttk.LabelFrame(parent, text='拟合方案', padding=10)
-        fit_frame.pack(fill='both', expand=True, pady=(8, 0))
+        fit_frame.pack(side='right', fill='both', expand=True, padx=(10, 0))
 
         self.fit_canvas = tk.Canvas(fit_frame, highlightthickness=0)
         scrollbar = ttk.Scrollbar(fit_frame, orient='vertical', command=self.fit_canvas.yview)
@@ -2687,8 +2695,7 @@ class MainWindow(tk.Tk):
 
         # 更新曲线数据（实时追加）
         if self.cal_thread and self.cal_thread.records:
-            if hasattr(self, 'curve') and self.curve:
-                self.curve.set_data(self.cal_thread.records)
+            self.curve.set_data(self.cal_thread.records)
         # 更新拟合曲线
         self._update_curve_with_fit()
 
@@ -2697,13 +2704,11 @@ class MainWindow(tk.Tk):
         selected = self.fit_var.get()
         for r in self.fit_results:
             if r['model'] == selected:
-                if hasattr(self, 'curve') and self.curve:
-                    self.curve.set_fit(r)
+                self.curve.set_fit(r)
                 break
         else:
-            if hasattr(self, 'curve') and self.curve:
-                self.curve.fit_line = None
-                self.curve.draw()
+            self.curve.fit_line = None
+            self.curve.draw()
 
     def _export_fit(self):
         """导出选定拟合模型"""
