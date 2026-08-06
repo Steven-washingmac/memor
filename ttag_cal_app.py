@@ -1284,6 +1284,13 @@ class MainWindow(tk.Tk):
         super().__init__()
         self.title('TTAG 温度标签标定系统 v3.0')
         self.geometry('1100x750')
+        # 设置窗口图标
+        try:
+            ico = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ttag_icon.ico')
+            if os.path.exists(ico):
+                self.iconbitmap(ico)
+        except Exception:
+            pass
         self.minsize(900, 600)
 
         self.cal_thread = None
