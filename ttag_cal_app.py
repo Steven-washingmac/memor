@@ -1508,7 +1508,7 @@ class MainWindow(tk.Tk):
         ttk.Button(hdr, text='+ 添加设备', command=self._add_device_row).pack(side='right')
 
         # Scrollable device list area
-        self.device_canvas = tk.Canvas(parent, height=120, highlightthickness=0)
+        self.device_canvas = tk.Canvas(parent, height=180, highlightthickness=0)
         scrollbar = ttk.Scrollbar(parent, orient='vertical', command=self.device_canvas.yview)
         self.device_inner = ttk.Frame(self.device_canvas)
         self.device_inner.bind('<Configure>',
