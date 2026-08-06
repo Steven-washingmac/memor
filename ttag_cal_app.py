@@ -1490,8 +1490,9 @@ class MainWindow(tk.Tk):
         # 右下: 拟合面板
         self._build_fit_panel(bottom)
 
-        # Build data table in bottom frame
+        # Build data table in bottom frame (hidden in calibrate mode)
         self._build_data_table()
+        self.paned.forget(self.bottom_frame)
 
     def _build_settings(self, parent):
         """构建设置区域"""
@@ -1850,13 +1851,14 @@ class MainWindow(tk.Tk):
             self.verify_frame.pack_forget()
             self.cal_frame.pack(fill='x', before=self.ctrl_frame)
             self.start_btn.config(text='▶ 开始标定')
-            self.data_notebook.tab(0, text='无数据')
+            self.bottom_frame.pack_forget()
             self.cal_mode_btn.config(bg='#007AFF', fg='white')
             self.verify_mode_btn.config(bg='white', fg='#007AFF')
         else:
             self.cal_frame.pack_forget()
             self.verify_frame.pack(fill='x', before=self.ctrl_frame)
             self.start_btn.config(text='▶ 开始验证')
+            self.bottom_frame.pack(after=self.paned.panes()[0], fill='both', expand=True)
             self.verify_mode_btn.config(bg='#007AFF', fg='white')
             self.cal_mode_btn.config(bg='white', fg='#007AFF')
 
