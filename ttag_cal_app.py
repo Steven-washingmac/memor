@@ -636,7 +636,7 @@ class CalibrationThread(threading.Thread):
 
                     # manual nudge (immediate, no wait)
                     if self.do_nudge and pv is not None and nudge_sv is None:
-                        if not need_cool:
+                        if pv < target:
                             nudge_sv = max(-30, min(100, target + 0.2))
                         else:
                             nudge_sv = max(-20, min(100, target - 0.2))
