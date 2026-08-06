@@ -1282,9 +1282,8 @@ class VerifyThread(threading.Thread):
 class MainWindow(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title('TTAG 温度标签标定系统 v3.0')
+        self.title('TTAG 温度标签标定系统')
         self.geometry('1100x750')
-        # 设置窗口图标
         try:
             ico = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ttag_icon.ico')
             if os.path.exists(ico):
@@ -1292,7 +1291,7 @@ class MainWindow(tk.Tk):
         except Exception:
             pass
         self.minsize(900, 600)
-        self.configure(bg='#f0f2f5')
+        self.configure(bg='#f5f5f7')
 
         # ---- 配色 ----
         self._setup_styles()
@@ -1322,40 +1321,46 @@ class MainWindow(tk.Tk):
         style = ttk.Style()
         style.theme_use('clam')
 
-        # 颜色定义
-        BLUE = '#2E86DE'
-        GREEN = '#27ae60'
-        ORANGE = '#f39c12'
-        RED = '#e74c3c'
-        DARK = '#2c3e50'
-        LIGHT = '#ecf0f1'
-        WHITE = '#ffffff'
+        # Apple-style 配色
+        ACCENT = '#007AFF'
+        BG = '#f5f5f7'
+        CARD = '#ffffff'
+        TEXT = '#1d1d1f'
+        SUBTLE = '#86868b'
+        SEPARATOR = '#d2d2d7'
+        GREEN = '#34c759'
+        ORANGE = '#ff9500'
+        RED = '#ff3b30'
 
-        style.configure('TFrame', background='#f0f2f5')
-        style.configure('TLabel', background='#f0f2f5', font=('微软雅黑', 9))
-        style.configure('TLabelFrame', background='#f0f2f5', font=('微软雅黑', 10, 'bold'))
-        style.configure('TLabelframe.Label', foreground=DARK)
-        style.configure('TButton', font=('微软雅黑', 9), padding=6)
-        style.configure('TEntry', font=('微软雅黑', 9))
-        style.configure('TCombobox', font=('微软雅黑', 9))
+        # 全局
+        style.configure('TFrame', background=BG)
+        style.configure('TLabelframe', background=CARD, borderwidth=1, relief='solid')
+        style.configure('TLabelframe.Label', background=CARD, foreground=TEXT,
+                        font=('Segoe UI', 11, 'bold'), borderwidth=0)
 
-        # 模式切换按钮样式
-        style.configure('Mode.Active.TRadiobutton', background=BLUE, foreground='white',
-                        font=('微软雅黑', 10, 'bold'))
-        style.configure('Mode.Inactive.TRadiobutton', background='#d5dbdb', foreground='#7f8c8d',
-                        font=('微软雅黑', 10))
+        style.configure('TLabel', background=BG, foreground=TEXT, font=('Segoe UI', 9))
+        style.configure('Card.TLabel', background=CARD, foreground=TEXT, font=('Segoe UI', 9))
 
-        # 主按钮
-        style.configure('Start.TButton', font=('微软雅黑', 11, 'bold'), padding=10)
-        style.configure('Pause.TButton', font=('微软雅黑', 10), padding=8)
-        style.configure('Stop.TButton', font=('微软雅黑', 10), padding=8)
+        style.configure('TButton', font=('Segoe UI', 9), borderwidth=1, relief='solid',
+                        background=CARD, foreground=TEXT)
+        style.map('TButton', background=[('active', '#e8e8ed')])
 
-        # 进度条
-        style.configure('TProgressbar', background=BLUE, troughcolor='#d5dbdb')
+        style.configure('TEntry', font=('Segoe UI', 9), fieldbackground=CARD, borderwidth=1)
+        style.configure('TCombobox', font=('Segoe UI', 9))
 
-        # 状态栏
-        style.configure('Status.TLabel', font=('Consolas', 9), background=WHITE,
-                        relief='sunken', padding=6)
+        # Accent button
+        style.configure('Accent.TButton', font=('Segoe UI', 10, 'bold'),
+                        background=ACCENT, foreground='white', borderwidth=0, padding=(16, 6))
+        style.map('Accent.TButton', background=[('active', '#0056cc')])
+
+        # Progress bar
+        style.configure('TProgressbar', background=ACCENT, troughcolor=SEPARATOR, borderwidth=0)
+
+        # Treeview (data table)
+        style.configure('Treeview', font=('Segoe UI', 9), background=CARD,
+                        fieldbackground=CARD, borderwidth=0)
+        style.configure('Treeview.Heading', font=('Segoe UI', 9, 'bold'),
+                        background='#f5f5f7', foreground=TEXT, borderwidth=0)
 
     # ========================================
     # UI 构建
@@ -1373,23 +1378,23 @@ class MainWindow(tk.Tk):
 
         main_frame = self.top_frame  # alias for existing code to work
 
-        # Mode toggle bar (styled pill buttons)
-        mode_bar = ttk.Frame(main_frame)
-        mode_bar.pack(fill='x', pady=(0, 6))
+        # Segmented control (iOS-style)
+        seg_frame = tk.Frame(main_frame, bg='#e4e4e4', bd=0, highlightthickness=0)
+        seg_frame.pack(fill='x', pady=(0, 10))
 
-        ttk.Label(mode_bar, text='📋 模式:', font=('微软雅黑', 10, 'bold')).pack(side='left', padx=(0, 8))
-
-        self.cal_mode_btn = tk.Button(mode_bar, text='标定 (单设备)',
-                                       bg='#2E86DE', fg='white', font=('微软雅黑', 10, 'bold'),
-                                       relief='flat', padx=16, pady=4, cursor='hand2',
+        self.cal_mode_btn = tk.Button(seg_frame, text='标定', font=('Segoe UI', 10),
+                                       bg='#007AFF', fg='white', relief='flat', bd=0,
+                                       padx=20, pady=5, cursor='hand2', activebackground='#007AFF',
+                                       activeforeground='white',
                                        command=lambda: self._switch_mode('calibrate'))
-        self.cal_mode_btn.pack(side='left', padx=2)
+        self.cal_mode_btn.pack(side='left')
 
-        self.verify_mode_btn = tk.Button(mode_bar, text='验证 (多设备)',
-                                          bg='#d5dbdb', fg='#7f8c8d', font=('微软雅黑', 10),
-                                          relief='flat', padx=16, pady=4, cursor='hand2',
+        self.verify_mode_btn = tk.Button(seg_frame, text='验证', font=('Segoe UI', 10),
+                                          bg='white', fg='#007AFF', relief='flat', bd=0,
+                                          padx=20, pady=5, cursor='hand2', activebackground='white',
+                                          activeforeground='#007AFF',
                                           command=lambda: self._switch_mode('verify'))
-        self.verify_mode_btn.pack(side='left', padx=2)
+        self.verify_mode_btn.pack(side='left')
 
         # 顶部: 设置区
         self._build_settings(main_frame)
@@ -1413,9 +1418,9 @@ class MainWindow(tk.Tk):
 
     def _build_settings(self, parent):
         """构建设置区域"""
-        # 共享连接栏（标定和验证模式都可见）
-        conn_frame = ttk.LabelFrame(parent, text='连接设置', padding=6)
-        conn_frame.pack(fill='x')
+        # 共享连接栏
+        conn_frame = ttk.LabelFrame(parent, text='连接', padding=10)
+        conn_frame.pack(fill='x', pady=(0, 8))
 
         row1 = ttk.Frame(conn_frame)
         row1.pack(fill='x', pady=2)
@@ -1737,14 +1742,14 @@ class MainWindow(tk.Tk):
             self.cal_frame.pack(fill='x', before=self.ctrl_frame)
             self.start_btn.config(text='▶ 开始标定')
             self.data_notebook.tab(0, text='无数据')
-            self.cal_mode_btn.config(bg='#2E86DE', fg='white', font=('微软雅黑', 10, 'bold'))
-            self.verify_mode_btn.config(bg='#d5dbdb', fg='#7f8c8d', font=('微软雅黑', 10))
+            self.cal_mode_btn.config(bg='#007AFF', fg='white')
+            self.verify_mode_btn.config(bg='white', fg='#007AFF')
         else:
             self.cal_frame.pack_forget()
             self.verify_frame.pack(fill='x', before=self.ctrl_frame)
             self.start_btn.config(text='▶ 开始验证')
-            self.verify_mode_btn.config(bg='#2E86DE', fg='white', font=('微软雅黑', 10, 'bold'))
-            self.cal_mode_btn.config(bg='#d5dbdb', fg='#7f8c8d', font=('微软雅黑', 10))
+            self.verify_mode_btn.config(bg='#007AFF', fg='white')
+            self.cal_mode_btn.config(bg='white', fg='#007AFF')
 
     def _build_fit_panel(self, parent):
         """拟合结果面板"""
