@@ -1292,6 +1292,10 @@ class MainWindow(tk.Tk):
         except Exception:
             pass
         self.minsize(900, 600)
+        self.configure(bg='#f0f2f5')
+
+        # ---- 配色 ----
+        self._setup_styles()
 
         self.cal_thread = None
         self.verify_thread = None
@@ -1312,6 +1316,48 @@ class MainWindow(tk.Tk):
         self.protocol('WM_DELETE_WINDOW', self._on_close)
 
     # ========================================
+    # 样式配置
+    # ========================================
+    def _setup_styles(self):
+        style = ttk.Style()
+        style.theme_use('clam')
+
+        # 颜色定义
+        BLUE = '#2E86DE'
+        GREEN = '#27ae60'
+        ORANGE = '#f39c12'
+        RED = '#e74c3c'
+        DARK = '#2c3e50'
+        LIGHT = '#ecf0f1'
+        WHITE = '#ffffff'
+
+        style.configure('TFrame', background='#f0f2f5')
+        style.configure('TLabel', background='#f0f2f5', font=('微软雅黑', 9))
+        style.configure('TLabelFrame', background='#f0f2f5', font=('微软雅黑', 10, 'bold'))
+        style.configure('TLabelframe.Label', foreground=DARK)
+        style.configure('TButton', font=('微软雅黑', 9), padding=6)
+        style.configure('TEntry', font=('微软雅黑', 9))
+        style.configure('TCombobox', font=('微软雅黑', 9))
+
+        # 模式切换按钮样式
+        style.configure('Mode.Active.TRadiobutton', background=BLUE, foreground='white',
+                        font=('微软雅黑', 10, 'bold'))
+        style.configure('Mode.Inactive.TRadiobutton', background='#d5dbdb', foreground='#7f8c8d',
+                        font=('微软雅黑', 10))
+
+        # 主按钮
+        style.configure('Start.TButton', font=('微软雅黑', 11, 'bold'), padding=10)
+        style.configure('Pause.TButton', font=('微软雅黑', 10), padding=8)
+        style.configure('Stop.TButton', font=('微软雅黑', 10), padding=8)
+
+        # 进度条
+        style.configure('TProgressbar', background=BLUE, troughcolor='#d5dbdb')
+
+        # 状态栏
+        style.configure('Status.TLabel', font=('Consolas', 9), background=WHITE,
+                        relief='sunken', padding=6)
+
+    # ========================================
     # UI 构建
     # ========================================
     def _build_ui(self):
@@ -1327,17 +1373,23 @@ class MainWindow(tk.Tk):
 
         main_frame = self.top_frame  # alias for existing code to work
 
-        # Mode toggle bar
+        # Mode toggle bar (styled pill buttons)
         mode_bar = ttk.Frame(main_frame)
         mode_bar.pack(fill='x', pady=(0, 6))
 
-        ttk.Label(mode_bar, text='模式:', font=('', 10)).pack(side='left', padx=(0, 8))
+        ttk.Label(mode_bar, text='📋 模式:', font=('微软雅黑', 10, 'bold')).pack(side='left', padx=(0, 8))
 
-        ttk.Radiobutton(mode_bar, text='标定 (单设备)', variable=self.mode_var,
-                        value='calibrate', command=self._on_mode_change).pack(side='left', padx=3)
+        self.cal_mode_btn = tk.Button(mode_bar, text='标定 (单设备)',
+                                       bg='#2E86DE', fg='white', font=('微软雅黑', 10, 'bold'),
+                                       relief='flat', padx=16, pady=4, cursor='hand2',
+                                       command=lambda: self._switch_mode('calibrate'))
+        self.cal_mode_btn.pack(side='left', padx=2)
 
-        ttk.Radiobutton(mode_bar, text='验证 (多设备)', variable=self.mode_var,
-                        value='verify', command=self._on_mode_change).pack(side='left', padx=3)
+        self.verify_mode_btn = tk.Button(mode_bar, text='验证 (多设备)',
+                                          bg='#d5dbdb', fg='#7f8c8d', font=('微软雅黑', 10),
+                                          relief='flat', padx=16, pady=4, cursor='hand2',
+                                          command=lambda: self._switch_mode('verify'))
+        self.verify_mode_btn.pack(side='left', padx=2)
 
         # 顶部: 设置区
         self._build_settings(main_frame)
@@ -1663,13 +1715,18 @@ class MainWindow(tk.Tk):
                                     font=('Consolas', 10), bg='#1e1e1e', fg='#d4d4d4')
         self.status_text.pack(fill='x')
 
+    def _switch_mode(self, mode):
+        if self.mode_var.get() == mode:
+            return
+        self.mode_var.set(mode)
+        self._on_mode_change()
+
     def _on_mode_change(self):
         """切换标定/验证模式：运行时锁定不可切换，切换时显隐对应面板"""
         running = (self.cal_thread and self.cal_thread.is_alive()) or \
                   (hasattr(self, 'verify_thread') and self.verify_thread and self.verify_thread.is_alive())
         if running:
             messagebox.showwarning('运行中', '请先停止当前运行再切换模式')
-            # Revert radio button
             current = 'calibrate' if self.mode_var.get() == 'verify' else 'verify'
             self.mode_var.set(current)
             return
@@ -1680,10 +1737,14 @@ class MainWindow(tk.Tk):
             self.cal_frame.pack(fill='x', before=self.ctrl_frame)
             self.start_btn.config(text='▶ 开始标定')
             self.data_notebook.tab(0, text='无数据')
+            self.cal_mode_btn.config(bg='#2E86DE', fg='white', font=('微软雅黑', 10, 'bold'))
+            self.verify_mode_btn.config(bg='#d5dbdb', fg='#7f8c8d', font=('微软雅黑', 10))
         else:
             self.cal_frame.pack_forget()
             self.verify_frame.pack(fill='x', before=self.ctrl_frame)
             self.start_btn.config(text='▶ 开始验证')
+            self.verify_mode_btn.config(bg='#2E86DE', fg='white', font=('微软雅黑', 10, 'bold'))
+            self.cal_mode_btn.config(bg='#d5dbdb', fg='#7f8c8d', font=('微软雅黑', 10))
 
     def _build_fit_panel(self, parent):
         """拟合结果面板"""
