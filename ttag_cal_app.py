@@ -1360,7 +1360,7 @@ class MainWindow(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title('TTAG 温度标签标定系统')
-        self.geometry('1280x780')
+        self.geometry('1400x900')
         try:
             ico = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ttag_icon.ico')
             if os.path.exists(ico):
@@ -1484,7 +1484,7 @@ class MainWindow(tk.Tk):
         bottom.pack(fill='both', expand=True, pady=(8, 0))
 
         # 左下: 曲线
-        self.curve = CurveCanvas(bottom, width=400, height=280)
+        self.curve = CurveCanvas(bottom, width=650, height=400)
         self.curve.pack(side='left', fill='both', expand=True)
 
         # 右下: 拟合面板
@@ -1595,7 +1595,7 @@ class MainWindow(tk.Tk):
         ttk.Button(hdr, text='+ 添加设备', command=self._add_device_row).pack(side='right')
 
         # Scrollable device list area
-        self.device_canvas = tk.Canvas(parent, height=180, highlightthickness=0)
+        self.device_canvas = tk.Canvas(parent, height=220, highlightthickness=0)
         scrollbar = ttk.Scrollbar(parent, orient='vertical', command=self.device_canvas.yview)
         self.device_inner = ttk.Frame(self.device_canvas)
         self.device_inner.bind('<Configure>',
@@ -1864,6 +1864,7 @@ class MainWindow(tk.Tk):
         """拟合结果面板 (全宽)"""
         fit_frame = ttk.LabelFrame(parent, text='拟合方案', padding=10)
         fit_frame.pack(side='right', fill='both', expand=True, padx=(10, 0))
+        fit_frame.configure(width=450)
 
         self.fit_canvas = tk.Canvas(fit_frame, highlightthickness=0)
         scrollbar = ttk.Scrollbar(fit_frame, orient='vertical', command=self.fit_canvas.yview)
@@ -2572,7 +2573,7 @@ class MainWindow(tk.Tk):
             frame = ttk.Frame(self.data_notebook)
             self.data_notebook.add(frame, text=did)
             tree = ttk.Treeview(frame, columns=('target', 'bath', 'raw', 'calc', 'error', 'pass_'),
-                                show='headings', height=15)
+                                show='headings', height=20)
             tree.heading('target', text='目标°C'); tree.column('target', width=70)
             tree.heading('bath', text='水浴°C'); tree.column('bath', width=80)
             tree.heading('raw', text='原始值'); tree.column('raw', width=70)
