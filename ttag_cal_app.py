@@ -672,12 +672,11 @@ class CalibrationThread(threading.Thread):
                             last_pwr_zero = 0
 
                     if nudge_sv is not None:
-                        if abs(pv - target) <= params['bath_tolerance']:
-                            wb.set_temperature(target)
-                            nudge_sv = None
-                        elif time.time() - nudge_t > 120:
-                            wb.set_temperature(target)
-                            nudge_sv = None
+                        # 推一把后保持至少 5 秒，不让 PV 在容差内立刻取消
+                        if time.time() - nudge_t > 5:
+                            if abs(pv - target) <= params['bath_tolerance'] or time.time() - nudge_t > 120:
+                                wb.set_temperature(target)
+                                nudge_sv = None
 
                     # reached
                     if pv is not None:
