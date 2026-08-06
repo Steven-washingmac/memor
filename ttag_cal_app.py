@@ -652,6 +652,13 @@ class CalibrationThread(threading.Thread):
                         nudge_sv = None
                         self.do_nudge = False
                         self._push('log', '推一把已取消')
+                        # 取消后立即检查稳定性
+                        if pv is not None and abs(pv - target) <= params['bath_tolerance']:
+                            time.sleep(2)
+                            pv2 = wb.get_temperature()
+                            if pv2 is not None and abs(pv2 - pv) < 0.15 and abs(pv2 - target) <= params['bath_tolerance']:
+                                bath_ok = True
+                                break
 
                     # reached
                     if pv is not None:
