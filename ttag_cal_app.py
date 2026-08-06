@@ -851,7 +851,7 @@ class CalibrationThread(threading.Thread):
                     temps_r = [r['target'] for r in records]
                     self.fit_results = FittingEngine.fit_all(adcs, temps_r)
                     self._push('fit_update', self.fit_results)
-                self._save_csv(records, params)
+                self._save_multi_csv(params['output'], params['device_ids'], device_records)
                 if len(records) % 5 == 0:
                     self._save_excel(records, params)
 
@@ -932,21 +932,22 @@ class CalibrationThread(threading.Thread):
         except Exception as e:
             self._push('log', f'Excel 写入失败: {e}')
 
-    def _save_csv(self, records, params):
-        csv_path = params['output'].replace('.xlsx', '.csv')
-        try:
-            file_exists = os.path.exists(csv_path)
-            with open(csv_path, 'a', newline='', encoding='utf-8-sig') as f:
-                writer = csv.writer(f)
-                if not file_exists:
-                    writer.writerow(["#", "TagID", "Target(C)", "Actual(C)", "ADC_Mean",
-                                     "ADC_Range", "ADC_Samples", "StableTime(s)", "Timestamp", "Note"])
-                r = records[-1]
-                writer.writerow([len(records), params['device_id'], r['target'], r['actual'],
-                                 round(r['adc_mean'], 1), r['adc_range'], r['adc_n'],
-                                 round(r['elapsed']), r['ts'], ''])
-        except Exception as e:
-            self._push('log', f'CSV 写入失败: {e}')
+    def _save_multi_csv(self, output_path, device_ids, device_records):
+        """每设备一个 CSV 后备文件，点对点保存"""
+        import csv
+        for did, rec in device_records.items():
+            csv_path = output_path.replace('.xlsx', f'_{did}.csv')
+            try:
+                file_exists = os.path.exists(csv_path)
+                with open(csv_path, 'a', newline='', encoding='utf-8-sig') as f:
+                    writer = csv.writer(f)
+                    if not file_exists:
+                        writer.writerow(["#", "DeviceID", "Target(C)", "Actual(C)", "ADC", "Timestamp"])
+                    # count existing rows
+                    count = sum(1 for _ in open(csv_path, encoding='utf-8-sig')) if file_exists else 0
+                    writer.writerow([count, did, rec['target'], rec['actual'], rec['adc'], rec['ts']])
+            except Exception as e:
+                self._push('log', f'CSV 写入失败({did}): {e}')
 
     def _save_excel(self, records, params):
         if Workbook is None:
