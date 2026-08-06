@@ -829,14 +829,19 @@ class CalibrationThread(threading.Thread):
                 ts_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
                 device_records = {}
+                missing = []
                 for did in device_ids:
                     st = receiver.get_state(did) if receiver else {}
                     d_adc = st.get('adc')
+                    if d_adc is None:
+                        missing.append(did)
                     device_records[did] = {
                         'target': target, 'actual': pv_now,
                         'adc': d_adc if d_adc is not None else 0,
                         'ts': ts_str,
                     }
+                if missing:
+                    self._push('log', f'⚠ 设备无ADC数据: {missing}')
 
                 # 保持向后兼容
                 records.append({
