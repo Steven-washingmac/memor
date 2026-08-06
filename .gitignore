@@ -122,3 +122,9 @@ ADCTdata/
 *.png
 *.jpg
 *.xlsx
+
+# SDD 工作文件
+.superpowers/
+
+# 配置文件
+ttag_config.ini
