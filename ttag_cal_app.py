@@ -640,19 +640,21 @@ class CalibrationThread(threading.Thread):
                         if not need_cool and pv < target - params['bath_tolerance'] and pwr is not None and pwr == 0:
                             if last_pwr_zero == 0:
                                 last_pwr_zero = time.time()
-                            elif time.time() - last_pwr_zero > 15 and gap > 0.15:
-                                nudge_sv = min(100, target + 2.0)
+                            elif time.time() - last_pwr_zero > 10 and gap > 0.1:
+                                nudge_sv = min(100, target + 5.0)
                                 wb.set_temperature(nudge_sv)
                                 nudge_t = time.time()
                                 last_pwr_zero = 0
+                                self._push('log', f'推一把升温: SV→{nudge_sv}°C')
                         elif need_cool and pv > target + params['bath_tolerance'] and pwr is not None and pwr == 0:
                             if last_pwr_zero == 0:
                                 last_pwr_zero = time.time()
-                            elif time.time() - last_pwr_zero > 15 and gap > 0.15:
-                                nudge_sv = max(-30, target - 2.0)
+                            elif time.time() - last_pwr_zero > 10 and gap > 0.1:
+                                nudge_sv = max(-30, target - 5.0)
                                 wb.set_temperature(nudge_sv)
                                 nudge_t = time.time()
                                 last_pwr_zero = 0
+                                self._push('log', f'推一把降温: SV→{nudge_sv}°C')
                         else:
                             last_pwr_zero = 0
 
