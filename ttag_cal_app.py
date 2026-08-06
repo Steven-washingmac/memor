@@ -1391,7 +1391,10 @@ class MainWindow(tk.Tk):
 
         # 设置初始分隔线位置（上 65% 下 35%）
         self.update_idletasks()
-        self.paned.sash_place(0, 0, int(self.winfo_height() * 0.65))
+        try:
+            self.paned.sash_place(0, 0, int(self.winfo_height() * 0.65))
+        except tk.TclError:
+            pass
 
         # 每 200ms 从后台线程拉状态
         self._poll_status()
