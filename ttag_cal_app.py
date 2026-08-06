@@ -562,31 +562,28 @@ class CalibrationThread(threading.Thread):
             sv = wb.get_setpoint()
             self._push('log', f'水浴已连接: PV={pv:.2f}°C, SV={sv}°C' if pv else '水浴已连接(PV读取中...)')
 
-            # 连接 TTAG
-            ttag = None
+            # 连接基站 (多设备)
+            device_ids = params.get('device_ids', [params['device_id']])
+            receiver = None
             if not params.get('no_ttag'):
-                ttag = TtagReceiver(
-                    params['device_id'],
-                    port=params['ttag_port'],
-                    connect_to=params.get('connect_to')
-                )
-                ttag.start()
-                ttag_err = ttag.error_msg
-                if ttag_err:
-                    self._push('log', f'TTAG 启动警告: {ttag_err}')
-                self._push('log', f'等待基站连接 (设备 {params["device_id"]}, 端口 {params["ttag_port"]})...')
+                receiver = MultiReceiver(device_ids, port=params['ttag_port'],
+                                         connect_to=params.get('connect_to'))
+                receiver.start()
+                dev_str = ', '.join(str(d) for d in device_ids)
+                self._push('log', f'等待基站连接 (设备 {dev_str})...')
+                found = set()
                 for i in range(60):
                     if self.stopped.is_set():
                         break
                     time.sleep(0.5)
-                    st = ttag.get_state()
-                    if i % 4 == 0:  # 每 2 秒更新一次等待状态
-                        self._push('log', f'等待基站... ({i*0.5:.0f}s) 已收 {st.get("frames", 0)} 帧')
-                    if st.get('frames', 0) > 0:
-                        self._push('log', f'基站已连接: {st["frames"]} 帧, {st["hits"]} 次命中')
+                    for did in device_ids:
+                        if receiver.get_state(did).get('hits', 0) > 0:
+                            found.add(did)
+                    if len(found) >= len(device_ids):
                         break
-                else:
-                    self._push('log', f'警告: 30秒内未收到基站数据 (收到 {ttag.get_state().get("frames", 0)} 帧)')
+                    if i % 4 == 0:
+                        self._push('log', f'等待基站... ({i*0.5:.0f}s) 已发现 {len(found)}/{len(device_ids)}')
+                self._push('log', f'设备就绪: {len(found)}/{len(device_ids)} 在线')
 
             adc_det = AdcStabilityDetector(params['stability_samples'], params['stability_threshold'])
             records = list(params.get('prev_records', []))
@@ -622,7 +619,7 @@ class CalibrationThread(threading.Thread):
 
                     pv = wb.get_temperature()
                     pwr = wb.get_status()
-                    ts = ttag.get_state() if ttag else {}
+                    ts = receiver.get_state(device_ids[0]) if receiver else {}
                     elapsed_t = time.time() - t0_total
                     new_done = done - len(params.get('prev_records', []))
                     eta = (elapsed_t / max(new_done, 1)) * (total - done) if new_done > 0 else 0
@@ -751,12 +748,13 @@ class CalibrationThread(threading.Thread):
                         self._push('log', f'❌ {target}°C 多次重试失败，跳过。检查水浴!')
                     continue
 
-                # ---- 等 TTAG ADC 稳定 ----
-                if ttag is not None:
+                # ---- 等 TTAG ADC 稳定 (多设备：用第一设备判定稳定，所有设备同步记录) ----
+                if receiver is not None:
                     adc_det.reset()
                     t2 = time.time()
                     adc_ok = False
-                    last_hits = ttag.get_state().get('hits', 0)
+                    first_did = device_ids[0]
+                    last_hits = receiver.get_state(first_did).get('hits', 0)
 
                     while time.time() - t2 < 240 and not self.stopped.is_set():
                         while self.paused.is_set() is False and not self.stopped.is_set():
@@ -766,7 +764,7 @@ class CalibrationThread(threading.Thread):
 
                         pv = wb.get_temperature()
                         pwr = wb.get_status()
-                        ts = ttag.get_state()
+                        ts = receiver.get_state(first_did)
                         adc_v = ts.get('adc')
                         cur_hits = ts.get('hits', 0)
                         elapsed_t = time.time() - t0_total
@@ -798,7 +796,7 @@ class CalibrationThread(threading.Thread):
 
                     if not adc_ok:
                         _, mean, rng, n, _ = adc_det.check()
-                        ts2 = ttag.get_state()
+                        ts2 = receiver.get_state(first_did) if receiver else {}
                         adc_mean = mean if mean is not None else ts2.get('adc') if ts2.get('adc') is not None else 0
                         adc_range = rng if rng is not None else 0
                         adc_n = n
@@ -806,16 +804,32 @@ class CalibrationThread(threading.Thread):
                 else:
                     adc_mean = adc_range = adc_n = adc_elapsed = 0
 
-                # ---- 记录 ----
+                # ---- 记录 (每设备读取当前 ADC) ----
                 pv = wb.get_temperature()
                 pv_now = pv if pv is not None else target
                 ts_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+                device_records = {}
+                for did in device_ids:
+                    st = receiver.get_state(did) if receiver else {}
+                    d_adc = st.get('adc')
+                    device_records[did] = {
+                        'target': target, 'actual': pv_now,
+                        'adc': d_adc if d_adc is not None else 0,
+                        'ts': ts_str,
+                    }
+
+                # 保持向后兼容
                 records.append({
                     'target': target, 'actual': pv_now,
                     'adc_mean': adc_mean, 'adc_range': adc_range,
                     'adc_n': adc_n, 'elapsed': adc_elapsed, 'ts': ts_str,
                 })
                 self.records = records
+                self.device_records = device_records
+
+                # 保存每设备 Excel Sheet
+                self._save_multi_excel(params['output'], target, device_records, len(records))
 
                 # 每 5 个点重新拟合并更新曲线
                 if len(records) % 5 == 0 and len(records) >= 5:
@@ -823,8 +837,6 @@ class CalibrationThread(threading.Thread):
                     temps_r = [r['target'] for r in records]
                     self.fit_results = FittingEngine.fit_all(adcs, temps_r)
                     self._push('fit_update', self.fit_results)
-
-                # 保存 CSV
                 self._save_csv(records, params)
                 if len(records) % 5 == 0:
                     self._save_excel(records, params)
@@ -860,6 +872,51 @@ class CalibrationThread(threading.Thread):
             self.q.put_nowait({'type': msg_type, 'data': data})
         except queue.Full:
             pass
+
+    def _save_multi_excel(self, output_path, target, device_records, total_points):
+        """多设备标定：每设备一个 Sheet，点对点保存"""
+        if Workbook is None:
+            return
+        try:
+            path = output_path
+            if os.path.exists(path):
+                wb = load_workbook(path)
+            else:
+                wb = Workbook()
+                wb.remove(wb.active)
+
+            from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
+            thin = Border(left=Side(style='thin'), right=Side(style='thin'),
+                           top=Side(style='thin'), bottom=Side(style='thin'))
+            hdr_fill = PatternFill(start_color='4472C4', end_color='4472C4', fill_type='solid')
+
+            for did, rec in device_records.items():
+                sname = f'{did} 标定'
+                if sname not in wb.sheetnames:
+                    ws = wb.create_sheet(sname)
+                    ws.merge_cells('A1:G1')
+                    ws['A1'] = f'TTAG {did} 标定数据'
+                    ws['A1'].font = Font(bold=True, size=14)
+                    ws['A1'].alignment = Alignment(horizontal='center')
+                    hdrs = ['#','目标°C','实际°C','ADC','时间']
+                    for ci, h in enumerate(hdrs, 1):
+                        c = ws.cell(row=3, column=ci, value=h)
+                        c.font = Font(bold=True, size=11, color='FFFFFF')
+                        c.fill = hdr_fill
+                        c.alignment = Alignment(horizontal='center')
+                        c.border = thin
+                    for ci, w in enumerate([8, 14, 14, 12, 22], 1):
+                        ws.column_dimensions[chr(64+ci)].width = w
+                ws = wb[sname]
+                nr = ws.max_row + 1
+                vals = [total_points, rec['target'], rec['actual'], rec['adc'], rec['ts']]
+                for ci, v in enumerate(vals, 1):
+                    c = ws.cell(row=nr, column=ci, value=v)
+                    c.alignment = Alignment(horizontal='center')
+                    c.border = thin
+            wb.save(path)
+        except Exception as e:
+            self._push('log', f'Excel 写入失败: {e}')
 
     def _save_csv(self, records, params):
         csv_path = params['output'].replace('.xlsx', '.csv')
@@ -1425,9 +1482,7 @@ class MainWindow(tk.Tk):
         row1 = ttk.Frame(conn_frame)
         row1.pack(fill='x', pady=2)
 
-        ttk.Label(row1, text='设备ID:').pack(side='left')
-        self.device_id_var = tk.StringVar(value='195082')
-        ttk.Entry(row1, textvariable=self.device_id_var, width=8).pack(side='left', padx=(2, 15))
+        self.device_id_var = tk.StringVar(value='195082')  # 保留兼容
 
         # 连接模式
         self.conn_mode_var = tk.StringVar(value='server')
@@ -1458,6 +1513,18 @@ class MainWindow(tk.Tk):
         # 标定参数面板（仅标定模式可见）
         self.cal_frame = ttk.LabelFrame(parent, text='标定参数', padding=8)
         self.cal_frame.pack(fill='x')
+
+        # 设备列表（标定模式）
+        cal_dev_hdr = ttk.Frame(self.cal_frame)
+        cal_dev_hdr.pack(fill='x')
+        ttk.Label(cal_dev_hdr, text='设备:', font=('Segoe UI', 9, 'bold')).pack(side='left')
+        ttk.Button(cal_dev_hdr, text='+ 添加', command=lambda: self._add_cal_device_row()).pack(side='right')
+
+        self.cal_device_inner = ttk.Frame(self.cal_frame)
+        self.cal_device_inner.pack(fill='x', pady=(2, 4))
+        self.cal_device_rows = []
+        # 预加载一个默认设备
+        self._add_cal_device_row(195082)
 
         row2 = ttk.Frame(self.cal_frame)
         row2.pack(fill='x', pady=(2, 2))
@@ -1584,6 +1651,26 @@ class MainWindow(tk.Tk):
         ttk.Label(param_row, text='阈值≤:').pack(side='left')
         self.verify_thresh_var = tk.StringVar(value='5')
         ttk.Entry(param_row, textvariable=self.verify_thresh_var, width=4).pack(side='left', padx=2)
+
+    def _add_cal_device_row(self, did=''):
+        """标定模式：添加设备号输入行（只需设备号，固定旧ADC）"""
+        row_frame = ttk.Frame(self.cal_device_inner)
+        row_frame.pack(fill='x', pady=1)
+        id_var = tk.StringVar(value=str(did))
+        ttk.Label(row_frame, text=f'#{len(self.cal_device_rows) + 1}', width=3).pack(side='left')
+        ttk.Entry(row_frame, textvariable=id_var, width=8).pack(side='left', padx=3)
+        ttk.Label(row_frame, text='(旧ADC)', foreground='#86868b', font=('Segoe UI', 8)).pack(side='left', padx=3)
+        def remove():
+            row_frame.destroy()
+            self.cal_device_rows.remove(row_data)
+            for i, r in enumerate(self.cal_device_rows, 1):
+                for child in r['frame'].winfo_children():
+                    if isinstance(child, ttk.Label):
+                        txt = child.cget('text')
+                        if txt and txt.startswith('#'): child.config(text=f'#{i}'); break
+        ttk.Button(row_frame, text='✕', width=2, command=remove).pack(side='right', padx=3)
+        row_data = {'frame': row_frame, 'id_var': id_var}
+        self.cal_device_rows.append(row_data)
 
     def _add_device_row(self, did='', proto='new_direct', step=0):
         """添加一个设备卡片行：设备号输入 + 协议下拉 + 测量间隔 + 删除按钮"""
@@ -1934,7 +2021,17 @@ class MainWindow(tk.Tk):
 
     def _get_params(self):
         """从 UI 收集所有参数"""
-        device_id = int(self.device_id_var.get())
+        # 读取设备列表
+        device_ids = []
+        for row in self.cal_device_rows:
+            try:
+                did = int(row['id_var'].get())
+                device_ids.append(did)
+            except ValueError:
+                pass
+        if not device_ids:
+            raise ValueError('请至少添加一个设备号')
+
         start = float(self.start_var.get())
         end = float(self.end_var.get())
         step = float(self.step_var.get())
@@ -1952,8 +2049,10 @@ class MainWindow(tk.Tk):
         output_dir = os.path.join(output_root, run_ts)
         os.makedirs(output_dir, exist_ok=True)
 
+        dev_names = '_'.join(str(d) for d in sorted(device_ids))
         return {
-            'device_id': device_id,
+            'device_ids': device_ids,
+            'device_id': device_ids[0],  # 兼容旧代码
             'start': start, 'end': end, 'step': step,
             'temps': temps,
             'bath_tolerance': float(self.tol_var.get()),
@@ -1964,7 +2063,7 @@ class MainWindow(tk.Tk):
             'connect_to': (f'{self.client_host_var.get()}:{self.ttag_port_var.get()}'
                            if self.conn_mode_var.get() == 'client' else None),
             'no_ttag': False,
-            'output': os.path.join(output_dir, f'cal_{device_id}.xlsx'),
+            'output': os.path.join(output_dir, f'cal_{dev_names}.xlsx'),
             'prev_records': [],
             'completed_set': set(),
         }
@@ -1985,8 +2084,9 @@ class MainWindow(tk.Tk):
             return
 
         # 确认
-        msg = f'将标定 {len(params["temps"])} 个点: {params["start"]} → {params["end"]} °C\n'
-        msg += f'设备: {params["device_id"]}\n'
+        dev_str = ', '.join(str(d) for d in params['device_ids'])
+        msg = f'标定 {len(params["temps"])} 个点: {params["start"]} → {params["end"]} °C\n'
+        msg += f'设备({len(params["device_ids"])}台): {dev_str}\n'
         msg += f'输出: {params["output"]}\n\n确定开始?'
         if not messagebox.askyesno('确认', msg):
             return
