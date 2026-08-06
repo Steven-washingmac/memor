@@ -1088,6 +1088,7 @@ class VerifyThread(threading.Thread):
         self.paused = threading.Event()
         self.paused.clear()
         self.stopped = threading.Event()
+        self.do_nudge = False  # 手动推一把
 
     def _push(self, msg_type, data):
         try:
@@ -1159,6 +1160,7 @@ class VerifyThread(threading.Thread):
 
                 # Set water bath
                 wb.set_temperature(target)
+                nudge_sv = None
 
                 # Wait for stability
                 t1 = time.time()
@@ -1168,16 +1170,31 @@ class VerifyThread(threading.Thread):
                         break
                     pv = wb.get_temperature()
                     pwr = wb.get_status()
+
+                    # Manual nudge
+                    if self.do_nudge and pv is not None and nudge_sv is None:
+                        nudge_sv = target - 0.2 if pv > target else target + 0.2
+                        nudge_sv = max(-20, min(100, nudge_sv))
+                        wb.set_temperature(nudge_sv)
+                        self._push('log', {'text': f'手动推一把: SV={nudge_sv}C'})
+                    if nudge_sv is not None and not self.do_nudge:
+                        wb.set_temperature(target)
+                        nudge_sv = None
+                        self.do_nudge = False
+                        self._push('log', {'text': '推一把已取消'})
+
                     if pv is not None and abs(pv - target) <= params['bath_tolerance']:
                         time.sleep(2)
                         pv2 = wb.get_temperature()
                         if pv2 is not None and abs(pv2 - pv) < 0.15 and abs(pv2 - target) <= params['bath_tolerance']:
                             bath_ok = True
+                            if nudge_sv is not None:
+                                wb.set_temperature(target)
                             break
                     self._push('status', {
                         'phase': 'bath', 'target': target, 'pv': pv, 'pwr': pwr,
                         'done': i, 'total': total, 'elapsed': time.time() - t0,
-                        'disp_i': i + 1,
+                        'disp_i': i + 1, 'nudge_sv': nudge_sv,
                     })
                     time.sleep(0.5)
 
