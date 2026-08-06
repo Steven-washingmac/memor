@@ -1464,7 +1464,7 @@ class MainWindow(tk.Tk):
         bottom.pack(fill='both', expand=True, pady=(8, 0))
 
         # 左下: 曲线
-        self.curve = CurveCanvas(bottom, width=600, height=300)
+        self.curve = CurveCanvas(bottom, width=450, height=280)
         self.curve.pack(side='left', fill='both', expand=True)
 
         # 右下: 拟合面板
@@ -1840,10 +1840,10 @@ class MainWindow(tk.Tk):
     def _build_fit_panel(self, parent):
         """拟合结果面板"""
         fit_frame = ttk.LabelFrame(parent, text='拟合方案', padding=8)
-        fit_frame.pack(side='right', fill='y', padx=(10, 0))
+        fit_frame.pack(side='right', fill='both', expand=True, padx=(12, 0))
 
         # 可滚动框架
-        self.fit_canvas = tk.Canvas(fit_frame, width=320, highlightthickness=0)
+        self.fit_canvas = tk.Canvas(fit_frame, width=420, highlightthickness=0)
         scrollbar = ttk.Scrollbar(fit_frame, orient='vertical', command=self.fit_canvas.yview)
         self.fit_inner = ttk.Frame(self.fit_canvas)
         self.fit_inner.bind('<Configure>', lambda e: self.fit_canvas.configure(
