@@ -1712,13 +1712,12 @@ class MainWindow(tk.Tk):
         self.time_label = ttk.Label(ctrl_frame, text='耗时: 0min')
         self.time_label.pack(side='left')
 
-        # 状态区
-        status_frame = ttk.LabelFrame(parent, text='实时状态', padding=6)
-        status_frame.pack(fill='x')
-
-        self.status_text = tk.Text(status_frame, height=3, width=80, state='disabled',
-                                    font=('Consolas', 10), bg='#1e1e1e', fg='#d4d4d4')
-        self.status_text.pack(fill='x')
+        # 状态标签 (单行)
+        self.status_var = tk.StringVar(value='就绪')
+        self.status_label = tk.Label(parent, textvariable=self.status_var,
+                                       font=('Segoe UI', 9), fg='#86868b', bg='#f5f5f7',
+                                       anchor='w')
+        self.status_label.pack(fill='x', pady=(4, 0))
 
     def _switch_mode(self, mode):
         if self.mode_var.get() == mode:
@@ -2531,10 +2530,7 @@ class MainWindow(tk.Tk):
         self._set_status(text)
 
     def _set_status(self, text):
-        self.status_text.config(state='normal')
-        self.status_text.delete('1.0', 'end')
-        self.status_text.insert('1.0', text)
-        self.status_text.config(state='disabled')
+        self.status_var.set(str(text).split('\n')[0] if text else '')
 
     def _update_fit_panel(self, fit_results):
         """更新拟合方案面板"""
