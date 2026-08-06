@@ -907,7 +907,9 @@ class CalibrationThread(threading.Thread):
                 wb = load_workbook(path)
             else:
                 wb = Workbook()
-                wb.remove(wb.active)
+                # 第一个设备用默认 sheet 改名
+                first_did = list(device_records.keys())[0]
+                wb.active.title = f'{first_did} 标定'
 
             from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
             thin = Border(left=Side(style='thin'), right=Side(style='thin'),
