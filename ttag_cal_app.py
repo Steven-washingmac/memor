@@ -610,7 +610,6 @@ class CalibrationThread(threading.Thread):
                 need_cool = False
                 nudge_sv = None
                 nudge_t = 0.0
-                last_pwr_zero = 0.0
 
                 while time.time() - t1 < 900 and not self.stopped.is_set():
                     while self.paused.is_set() is False and not self.stopped.is_set():
@@ -636,8 +635,7 @@ class CalibrationThread(threading.Thread):
                         need_cool = pv > target + params['bath_tolerance']
 
                     # manual nudge (immediate, no wait)
-                    if self.do_nudge and pv is not None:
-                        self.do_nudge = False
+                    if self.do_nudge and pv is not None and nudge_sv is None:
                         if not need_cool:
                             nudge_sv = max(-30, min(100, target + 0.2))
                         else:
@@ -645,46 +643,15 @@ class CalibrationThread(threading.Thread):
                         wb.set_temperature(nudge_sv)
                         nudge_t = time.time()
                         self._push('log', f'手动推一把: SV→{nudge_sv}°C')
-                        last_pwr_zero = 0
 
-                    # nudge logic
-                    if pv is not None and nudge_sv is None and time.time() - t1 > 20:
-                        gap = abs(pv - target)
-                        if not need_cool and pv < target - params['bath_tolerance'] and pwr is not None and pwr == 0:
-                            if last_pwr_zero == 0:
-                                last_pwr_zero = time.time()
-                            elif time.time() - last_pwr_zero > 10 and gap > 0.15:
-                                nudge_sv = max(-30, min(100, target + 0.2))
-                                wb.set_temperature(nudge_sv)
-                                nudge_t = time.time()
-                                last_pwr_zero = 0
-                                self._push('log', f'推一把升温: SV→{nudge_sv}°C')
-                        elif need_cool and pv > target + params['bath_tolerance'] and pwr is not None and pwr == 0:
-                            if last_pwr_zero == 0:
-                                last_pwr_zero = time.time()
-                            elif time.time() - last_pwr_zero > 10 and gap > 0.15:
-                                nudge_sv = max(-20, min(100, target - 0.2))
-                                wb.set_temperature(nudge_sv)
-                                nudge_t = time.time()
-                                last_pwr_zero = 0
-                                self._push('log', f'推一把降温: SV→{nudge_sv}°C')
-                        else:
-                            last_pwr_zero = 0
+                    # 自动推一把已移除，请使用手动推一把按钮
 
-                    if nudge_sv is not None and pv is not None:
-                        if self.do_nudge:
-                            wb.set_temperature(target)
-                            nudge_sv = None
-                            self.do_nudge = False
-                            self._push('log', '推一把已取消')
-                        elif not need_cool and pv >= target:
-                            wb.set_temperature(target)
-                            nudge_sv = None
-                            self._push('log', '已达目标，推一把自动取消')
-                        elif need_cool and pv <= target:
-                            wb.set_temperature(target)
-                            nudge_sv = None
-                            self._push('log', '已达目标，推一把自动取消')
+                    # 推一把：纯手动控制，点了取消才停
+                    if nudge_sv is not None and not self.do_nudge:
+                        wb.set_temperature(target)
+                        nudge_sv = None
+                        self.do_nudge = False
+                        self._push('log', '推一把已取消')
 
                     # reached
                     if pv is not None:
@@ -2058,17 +2025,20 @@ class MainWindow(tk.Tk):
             self._stop_cal()
 
     def _manual_nudge(self):
-        """手动推一把：点击触发，再点取消"""
+        """手动推一把：点击触发/取消"""
         thread = self.verify_thread if self.mode_var.get() == 'verify' and self.verify_thread else self.cal_thread
         if not thread or not thread.is_alive():
             return
-        thread.do_nudge = not thread.do_nudge
         if thread.do_nudge:
-            self._set_status('⚡ 推一把已触发（再点取消）')
-            self.nudge_btn.config(text='⚡ 取消推一把')
-        else:
+            # 有推一把在进行中 → 取消
+            thread.do_nudge = False
             self._set_status('推一把已取消')
             self.nudge_btn.config(text='⚡ 推一把')
+        else:
+            # 没有推一把 → 触发
+            thread.do_nudge = True
+            self._set_status('⚡ 推一把已触发（再点取消）')
+            self.nudge_btn.config(text='⚡ 取消推一把')
 
     def _get_params(self):
         """从 UI 收集所有参数"""
