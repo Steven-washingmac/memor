@@ -671,14 +671,17 @@ class CalibrationThread(threading.Thread):
                         else:
                             last_pwr_zero = 0
 
-                    if nudge_sv is not None:
-                        # 推一把后至少保持 3 秒不检查 PV
+                    if nudge_sv is not None and pv is not None:
                         if self.do_nudge:
                             wb.set_temperature(target)
                             nudge_sv = None
                             self.do_nudge = False
                             self._push('log', '推一把已取消')
-                        elif time.time() - nudge_t > 3 and abs(pv - target) <= params['bath_tolerance']:
+                        elif not need_cool and pv >= target:
+                            wb.set_temperature(target)
+                            nudge_sv = None
+                            self._push('log', '已达目标，推一把自动取消')
+                        elif need_cool and pv <= target:
                             wb.set_temperature(target)
                             nudge_sv = None
                             self._push('log', '已达目标，推一把自动取消')
