@@ -672,11 +672,16 @@ class CalibrationThread(threading.Thread):
                             last_pwr_zero = 0
 
                     if nudge_sv is not None:
-                        # 推一把后保持至少 5 秒，不让 PV 在容差内立刻取消
-                        if time.time() - nudge_t > 5:
-                            if abs(pv - target) <= params['bath_tolerance'] or time.time() - nudge_t > 120:
-                                wb.set_temperature(target)
-                                nudge_sv = None
+                        # 推一把后保持直到达成目标或手动取消
+                        if self.do_nudge:
+                            wb.set_temperature(target)
+                            nudge_sv = None
+                            self.do_nudge = False
+                            self._push('log', '推一把已取消')
+                        elif abs(pv - target) <= params['bath_tolerance']:
+                            wb.set_temperature(target)
+                            nudge_sv = None
+                            self._push('log', '已达目标，推一把自动取消')
 
                     # reached
                     if pv is not None:
@@ -2037,12 +2042,17 @@ class MainWindow(tk.Tk):
             self._stop_cal()
 
     def _manual_nudge(self):
-        """手动推一把：当前目标 ±2°C"""
+        """手动推一把：点击触发，再点取消"""
         thread = self.verify_thread if self.mode_var.get() == 'verify' and self.verify_thread else self.cal_thread
         if not thread or not thread.is_alive():
             return
-        thread.do_nudge = True
-        self._set_status('⚡ 手动推一把...')
+        thread.do_nudge = not thread.do_nudge
+        if thread.do_nudge:
+            self._set_status('⚡ 推一把已触发（再点取消）')
+            self.nudge_btn.config(text='⚡ 取消推一把')
+        else:
+            self._set_status('推一把已取消')
+            self.nudge_btn.config(text='⚡ 推一把')
 
     def _get_params(self):
         """从 UI 收集所有参数"""
