@@ -679,8 +679,8 @@ class CalibrationThread(threading.Thread):
                             'reached': reached and abs(pv - target) <= params['bath_tolerance'],
                         })
 
-                        # 稳定判定（推一把期间跳过）
-                        if nudge_sv is None and reached and abs(pv - target) <= params['bath_tolerance'] and time.time() - t1 > 10:
+                        # 稳定判定
+                        if reached and abs(pv - target) <= params['bath_tolerance'] and time.time() - t1 > 10:
                             pv_before = pv
                             time.sleep(2)
                             pv2 = wb.get_temperature()
@@ -699,8 +699,8 @@ class CalibrationThread(threading.Thread):
                                     break
                     time.sleep(0.4)
 
-                if not bath_ok and nudge_sv is None:
-                    # 超时：重试当前温度（最多3次），不跳过（推一把期间不触发重试）
+                if not bath_ok:
+                    # 超时：重试当前温度（最多3次），不跳过
                     retry = 0
                     while not bath_ok and retry < 3:
                         retry += 1
