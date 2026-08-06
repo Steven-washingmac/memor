@@ -1461,16 +1461,8 @@ class MainWindow(tk.Tk):
         # 中部: 控制按钮 + 状态
         self._build_controls(main_frame)
 
-        # 底部: 曲线 + 拟合面板
-        bottom = ttk.Frame(main_frame)
-        bottom.pack(fill='both', expand=True, pady=(8, 0))
-
-        # 左下: 曲线
-        self.curve = CurveCanvas(bottom, width=450, height=280)
-        self.curve.pack(side='left', fill='both', expand=True)
-
-        # 右下: 拟合面板
-        self._build_fit_panel(bottom)
+        # 底部: 拟合方案 (全宽)
+        self._build_fit_panel(main_frame)
 
         # Build data table in bottom frame
         self._build_data_table()
@@ -1840,12 +1832,11 @@ class MainWindow(tk.Tk):
             self.cal_mode_btn.config(bg='white', fg='#007AFF')
 
     def _build_fit_panel(self, parent):
-        """拟合结果面板"""
-        fit_frame = ttk.LabelFrame(parent, text='拟合方案', padding=8)
-        fit_frame.pack(side='right', fill='both', expand=True, padx=(12, 0))
+        """拟合结果面板 (全宽)"""
+        fit_frame = ttk.LabelFrame(parent, text='拟合方案', padding=10)
+        fit_frame.pack(fill='both', expand=True, pady=(8, 0))
 
-        # 可滚动框架
-        self.fit_canvas = tk.Canvas(fit_frame, width=420, highlightthickness=0)
+        self.fit_canvas = tk.Canvas(fit_frame, highlightthickness=0)
         scrollbar = ttk.Scrollbar(fit_frame, orient='vertical', command=self.fit_canvas.yview)
         self.fit_inner = ttk.Frame(self.fit_canvas)
         self.fit_inner.bind('<Configure>', lambda e: self.fit_canvas.configure(
@@ -2696,7 +2687,8 @@ class MainWindow(tk.Tk):
 
         # 更新曲线数据（实时追加）
         if self.cal_thread and self.cal_thread.records:
-            self.curve.set_data(self.cal_thread.records)
+            if hasattr(self, 'curve') and self.curve:
+                self.curve.set_data(self.cal_thread.records)
         # 更新拟合曲线
         self._update_curve_with_fit()
 
@@ -2705,11 +2697,13 @@ class MainWindow(tk.Tk):
         selected = self.fit_var.get()
         for r in self.fit_results:
             if r['model'] == selected:
-                self.curve.set_fit(r)
+                if hasattr(self, 'curve') and self.curve:
+                    self.curve.set_fit(r)
                 break
         else:
-            self.curve.fit_line = None
-            self.curve.draw()
+            if hasattr(self, 'curve') and self.curve:
+                self.curve.fit_line = None
+                self.curve.draw()
 
     def _export_fit(self):
         """导出选定拟合模型"""
@@ -2772,7 +2766,8 @@ class MainWindow(tk.Tk):
 
             # 更新曲线
             if self.cal_thread and self.cal_thread.records:
-                self.curve.set_data(self.cal_thread.records)
+                if hasattr(self, 'curve') and self.curve:
+                    self.curve.set_data(self.cal_thread.records)
 
             messagebox.showinfo('标定完成',
                                 f'标定完成!\n\n{data["records"]} 个数据点\n'
