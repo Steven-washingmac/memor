@@ -1361,11 +1361,11 @@ class MainWindow(tk.Tk):
 
     def _build_settings(self, parent):
         """构建设置区域"""
-        self.cal_frame = ttk.LabelFrame(parent, text='连接与参数', padding=8)
-        self.cal_frame.pack(fill='x')
+        # 共享连接栏（标定和验证模式都可见）
+        conn_frame = ttk.LabelFrame(parent, text='连接设置', padding=6)
+        conn_frame.pack(fill='x')
 
-        # 第一行: 连接设置
-        row1 = ttk.Frame(self.cal_frame)
+        row1 = ttk.Frame(conn_frame)
         row1.pack(fill='x', pady=2)
 
         ttk.Label(row1, text='设备ID:').pack(side='left')
@@ -1398,9 +1398,12 @@ class MainWindow(tk.Tk):
         self.bath_status_var = tk.StringVar(value='未连接')
         ttk.Label(row1, textvariable=self.bath_status_var, foreground='gray').pack(side='left', padx=(10, 0))
 
-        # 第二行: 标定参数
+        # 标定参数面板（仅标定模式可见）
+        self.cal_frame = ttk.LabelFrame(parent, text='标定参数', padding=8)
+        self.cal_frame.pack(fill='x')
+
         row2 = ttk.Frame(self.cal_frame)
-        row2.pack(fill='x', pady=(6, 2))
+        row2.pack(fill='x', pady=(2, 2))
 
         ttk.Label(row2, text='起始:').pack(side='left')
         self.start_var = tk.StringVar(value='47.0')
