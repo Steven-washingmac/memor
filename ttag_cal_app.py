@@ -639,9 +639,9 @@ class CalibrationThread(threading.Thread):
                     if self.do_nudge and pv is not None:
                         self.do_nudge = False
                         if not need_cool:
-                            nudge_sv = max(-30, min(100, target + 2.0))
+                            nudge_sv = max(-30, min(100, target + 0.2))
                         else:
-                            nudge_sv = max(-20, min(100, target - 2.0))
+                            nudge_sv = max(-20, min(100, target - 0.2))
                         wb.set_temperature(nudge_sv)
                         nudge_t = time.time()
                         self._push('log', f'手动推一把: SV→{nudge_sv}°C')
@@ -654,7 +654,7 @@ class CalibrationThread(threading.Thread):
                             if last_pwr_zero == 0:
                                 last_pwr_zero = time.time()
                             elif time.time() - last_pwr_zero > 10 and gap > 0.15:
-                                nudge_sv = max(-30, min(100, target + 1.0))
+                                nudge_sv = max(-30, min(100, target + 0.2))
                                 wb.set_temperature(nudge_sv)
                                 nudge_t = time.time()
                                 last_pwr_zero = 0
@@ -663,7 +663,7 @@ class CalibrationThread(threading.Thread):
                             if last_pwr_zero == 0:
                                 last_pwr_zero = time.time()
                             elif time.time() - last_pwr_zero > 10 and gap > 0.15:
-                                nudge_sv = max(-20, min(100, target - 1.0))
+                                nudge_sv = max(-20, min(100, target - 0.2))
                                 wb.set_temperature(nudge_sv)
                                 nudge_t = time.time()
                                 last_pwr_zero = 0
